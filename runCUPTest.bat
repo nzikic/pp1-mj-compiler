@@ -1,0 +1,1 @@
+java -cp .;bin;tests;libs\java-cup-11a.jar;libs\log4j-1.2.17.jar;libs\symboltable-1.1.0.jar;libs\mj-runtime.jar nzikic.pp1.CupTest tests\test01.mj out\test01.obj

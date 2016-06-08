@@ -1,0 +1,54 @@
+program P
+	int glob;
+	
+	class Kvadrat
+	{
+		int a;
+		{
+			int povrsina() { return a*a; }
+			int obim() { return 4*a; }
+		}
+	}
+	
+	class Pravougaonik extends Kvadrat
+	{
+		int b;
+		
+		{
+			int povrsina() 	
+			{ 
+				if ("zika" == "mile")
+					b = 30;
+				else
+					b = 20; 
+				return a*b; 
+			}
+			int obim()		{ return (2*a + 2*b); }
+		}
+	}
+{
+	
+	void main() 
+		Kvadrat k;
+		Pravougaonik p;
+	{
+		glob = 1;
+		
+		k = new Kvadrat;
+		k.a = 8;
+		
+		print (k.povrsina()); print (eol);
+		
+		p = new Pravougaonik;
+		p.a = 10;
+		p.b = 40;
+		
+		k = p;
+		
+		glob = k.povrsina();
+	
+	
+		print(glob);
+	}
+
+}

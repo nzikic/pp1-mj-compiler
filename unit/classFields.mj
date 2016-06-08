@@ -1,0 +1,41 @@
+program P 
+
+	class A
+	{ 
+		int x;
+		int y;
+		int a[];
+	}
+	
+	class B
+	{
+		A flda;
+	}
+	
+	
+
+{
+	void main() 
+		A a; B b[];
+	{
+		a = new A;
+		
+		b = new B[2];
+		b[1] = new B;
+		b[1].flda = a;
+		
+		b[1].flda.x = 2;
+		b[1].flda.y = 5;
+		b[1].flda.a = new int[4];
+		b[1].flda.a[2] = 100;
+		
+		
+		print (b[1].flda.x); 
+		print (eol);
+		
+		print (b[1].flda.y, 2);
+		print(eol);
+		
+		print(b[1].flda.a[2]);
+	}
+}

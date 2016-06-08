@@ -1,0 +1,61 @@
+//nivo C
+
+program test08
+
+	class Alfa extends Nepostojeca {  //semanticka, osnovna klasa ne postoji
+		int x;
+		char x;
+		real y;                       //semanticka, tip ne postoji 
+		y z;                          //semanticka, isto
+		char b;
+		{
+			void k(){
+				this.b = 'a';
+			}
+			
+			int f(int sss){        
+				this = 1;              //semanticka, ne poklapaju se tipovi
+				this.b = 1;            //semanticka, ne poklapaju se tipovi
+				this.zh = 2;           //semanticka, polje ne postoji
+				this.b = k();          //semanticka, metoda k() vraca void
+				return b;              //semanticka, ne poklapa se tip povratne vrednosti
+			} 
+		}
+		
+	}
+	
+	class Beta{
+		int a,b;
+		{
+			void setA(){
+				read(a);
+			}
+			
+			void setAB(int aa, int bb){
+				a = aa;
+				b = bb;
+			}
+		}
+	}
+	
+	class Gama extends Beta{
+		Beta b;
+	}
+	
+	Gama g;
+{
+	void main2()               //semanticka na kraju, nije definisana main fja
+	Alfa a;
+	{
+		a = new Alfa;
+		g = new Gama;
+		print(a.f((3 + 5)-4));
+		this = 3;               //semanticka, this nedeklarisan, ne poklapaju se tipovi
+		
+		g.setA(2);              //semanticka, broj parametara se ne poklapa (ovde je visak parametara)
+		g.setAB(2);              //semanticka, isto (ovde je manjak parametara)
+		g.setAB('a', 'b');       //semanticka, ne poklapaju se tipovi oba parametra
+		g.setAB('a',  5);        //semanticka, ne poklapa se tip prvog parametra
+		g.setAB( 5,  'b');       //semanticka, ne poklapa se tip drugog parametra
+	}
+}	

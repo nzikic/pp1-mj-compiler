@@ -1,0 +1,50 @@
+//nivo B
+
+program Rastojanje
+	int xa, ya, xb, yb, xc, xc;               // semanticka, dvaput deklarisana promeljiva
+	char cccc;
+	int a, b  c;                              // sintaksna, oporavak do ;
+	int u,v;
+{
+	int distance(int x1, int y1, int x2, int y2){
+		sqrt(sqr(x1-x2) + sqr(y1-y2));         //semanticka, sqr i sqrt nedeklarisani
+	}                                          //            povlaci gresku da nisu fje i nekorektan tip operanada uz +
+	
+	int obim(int a, int b, int c) char o;{
+		o = a + b + c;                        //semanticka, ne poklapaju se tipovi
+		return o;                             //semanticka, isto
+	}
+	
+	void povrsina(int a, int b, int c) string s;{
+		s = (a + b + c) / 2;                  // semanticka, tipovi
+		return s;                             // semanticka, fja definisana kao void
+	} 
+	
+	int pogresna(int x, z, int){              // sintaksna, oporavak do )
+		return 1;
+	}
+
+	int main() bool b; string p{            // semanticka, povratni tip main-a mora biti void
+											// sintaksna, oporavak do {
+	
+		read(xc); read(yc);                  // semanticka, yc nije deklarisan, nekorektan tip za read
+		
+		a = distance(cccc, ya, xb, yb);      // semanticka, tip prvog parametra se ne poklapa
+		
+		b = distance(xb, yb, xc, yc);        // semanticka, tip cetvrtog se ne poklapa jer nije deklarisan
+											 // tipovi u iskazu dodele se ne poklapaju (b je bool, fja vraca int)
+											 
+		c = distance(ya, xc, yc);            // semanticka, c nije deklarisan, broj parametara se ne poklapa, i yc nije deklarisan
+		                                     // povlaci da tipovi u iskazu dodele nisu kompatibilni
+		if(a+u > v && a+v > u && u+v > a){     
+			obim(a, b, u, v);                // semanticka, broj parametara se ne poklapa
+			povrsina(5+2, 'w', c);           // semanticka, c nedeklarisan, ne poklapaju se tipovi drugog i treceg parametra
+			print("Povrsina" + " trougla " + "je : ");
+		}
+		else{
+			print("Tacke ne formiraju trougao!");
+			print(eol);
+		}
+		
+	}
+}

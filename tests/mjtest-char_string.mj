@@ -1,0 +1,14 @@
+program Program {
+	int x = 1;
+	char c = 'a';
+	char c1 = 'aa';
+	char c2 = '';
+	
+	string s = "";
+	string s1 = "dsd";
+	string s2 = "sdsd
+	string mala = "sdd
+	"l"
+	
+	x = x + y;
+}

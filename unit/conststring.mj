@@ -1,0 +1,11 @@
+program p
+	const string s = "string";
+	string str;
+{
+	void main()
+	{
+		print(s+" pera");
+		
+		str = s;
+	}
+}

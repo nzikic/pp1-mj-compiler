@@ -1,0 +1,101 @@
+//nivo C
+//ispravan test
+
+program Geometrija
+	const int PI = 3;
+	int rezultati[];
+	int c;
+	
+	class kvadrat
+	{
+		string ime;
+		int a;
+		int b;
+		
+		{
+			int povrsina()
+			int p;
+			{
+				p=a*b;
+				return p;
+			}
+			
+			void setA()
+			{
+				read(a);
+			}
+			
+			void setB()
+			{
+				read(b); 
+			}
+			
+			void setIme()
+			{
+				read(ime);
+			}
+			
+		}
+	}
+	
+	kvadrat kvad;
+	
+	{
+	
+		int obim(int x,int y)
+		int rez;
+		{
+			rez=2*x +2*y;
+			return rez;		
+		}
+			
+		int obim2(kvadrat k)
+		int rez;
+		kvadrat pom;
+		{
+			pom=k;
+			rez=2*pom.b+2*pom.a;
+			return rez;
+		}
+		
+	
+		int racunaj()
+			int x;
+			char i[];
+		{ 
+			read(x);
+			return x;	
+		}
+		
+		int saberi(int b, int c)
+		int r;
+		{
+			b=r+c;
+			return b;
+		}
+		int prosledi(int f)
+		int g;
+		{
+			g=f;
+			return g;
+		}
+		
+		void stampaj (char r)
+		{
+			print (r);
+		}
+		
+		void main ()
+		{
+			
+			rezultati[1]=1;
+			kvad.setA();
+			kvad.setB();
+			rezultati[2]=kvad.povrsina();
+			rezultati[3]=obim2(kvad);	
+			
+			if (c>0) {while(c>0)read(c);}
+			c= racunaj();
+		}
+		
+	}

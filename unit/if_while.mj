@@ -1,0 +1,52 @@
+program Program
+
+int x;
+const bool f = false;
+const bool t = true;
+char c;
+int term;
+{
+	void main()
+	{
+		term = 0;
+		x = -2;
+		//x = 6;
+		
+		if (2 < x || x == 5)
+		{
+			term = 20;
+		}
+		else
+		{
+			term = 10;
+		}
+		
+		
+		while ( t || f )
+		{
+			if ((term % 2) != 0)	// neparan? stampaj i ++
+			{			
+				print (term); 
+				print (eol);
+				term++;
+			}
+			else				// paran
+				if (term >= 24)			// ako je >= 24 istampaj, break
+				{
+					print ("term je >= 24 i iznosi : ");
+					print (term, 10); print (eol);
+					print ("break"); print (eol);
+					break;
+				}
+				else			// paran < 24
+				{
+					term++;
+				}
+			print ("kraj iteracije\n", 20);
+		}
+		print ("KRAJ WHILE \n");
+		
+		print ( "term je na kraju : ");
+		print (term);
+	}
+}

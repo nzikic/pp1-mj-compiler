@@ -1,0 +1,1 @@
+java -cp libs\mj-runtime.jar rs.etf.pp1.mj.runtime.disasm out\program.obj

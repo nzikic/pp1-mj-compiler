@@ -1,0 +1,23 @@
+program P
+const string pera = "pera";
+const string mika = "pera";
+
+string s;
+
+const int y = 2;
+int x;
+{
+	void main()
+	{
+	    read(s);
+	    print(s); print(eol); print(eol); print(eol);
+	    
+	    x = y;
+	    x--;
+
+	    print("x je: "); print(x, 1); print(eol);
+	    print("y je: "); print(y); print(eol);
+
+	}
+
+}

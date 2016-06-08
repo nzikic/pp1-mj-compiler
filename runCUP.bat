@@ -1,0 +1,1 @@
+java -jar libs\java-cup-11a.jar -destdir src\nzikic\pp1 -parser MJParser spec\nz-parser.cup

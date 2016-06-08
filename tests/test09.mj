@@ -1,0 +1,80 @@
+//nivo C
+
+program MJAlfabet
+
+string str1, str2;
+char i;
+class Alfa{
+	char a, b;
+	int rez;
+	{
+		void dodaj(int x, int y, int z){
+			a = x;                       //semanticka, tipovi se ne poklapaju
+			z = x + y;                   
+			return z;                    //semanticka, metoda vraca void
+		}
+
+		void saberi (int x, int y) {
+			rez = x + y;                 
+		}
+		
+		void saberi (int x) {            //semanticka, metoda vec deklarisana
+			rez = rez + x;              
+		}
+	}
+}
+
+class Beta extends Alfa{
+	int c;
+	char d[];
+	{
+		void dodaj(int x, int y, int z) bool bulova; {
+			c = bulova++;                //sintaksna, oporavak do ;
+			a = "Alfa";                  //semanticka, tipovi se ne poklapaju
+			d = "Delta";                 //semanticka, isto
+			b = 'b';                     
+			print(b);
+		}
+	}
+}
+
+class Gama extends Alfa{
+	int a;
+	{
+		void dodaj(int x, int y, int z)  {
+			
+			a = x;
+			i = 'i';                         
+			niz = new int[5];                //semanticka, niz nije deklarisan, tipovi se ne poklapaju
+			while(i < 5)                     //semanticka, tipovi se ne poklapaju  
+				niz[i] = x + y + z + i;      //semanticka, niz, i, isto
+				i++;                         //semanticka
+		}
+	}
+}
+
+class Delta{
+	{
+		bool stampaj(){
+			print("alfa" + "i" + "omega");    //semanticka, fali return
+		}
+	}
+}
+
+{
+	void main() Alfa a1, a2; Beta b; Gama g; Delta d;{
+		a1 = new Alfa;
+		a2 = new Beta;
+		b = new Alfa;                       //semanticka, ne poklapaju se tipovi
+		g = new Gama;
+		d = new Delta;
+		
+		a1.dodaj('1', str2, 3);             //semanticka, tipovi prvog i drugog parametra se ne poklapaju
+		if (a1 == a2)                   
+			print("AlfaBeta");    
+		else if(a1 > a2)                    //semanticka, nije dozvoljen operator > za klasne tipove
+			print("true");
+		else if (g != d && g != b)          // semanticka, tipovi se ne poklapaju
+			print("false");
+	}
+}

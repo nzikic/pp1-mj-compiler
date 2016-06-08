@@ -1,0 +1,1 @@
+java -jar libs\JFlex.jar -d src\nzikic\pp1\ spec\nz-mjlexer.flex

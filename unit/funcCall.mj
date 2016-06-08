@@ -1,0 +1,29 @@
+program PROG
+	int x;
+	
+{
+	int increment(int inc)
+	{
+		
+		return x+inc;
+	}
+	
+	void incX()
+	{
+		x++;
+	}
+	
+	void main()
+	{
+		x = 6;
+		
+		x = increment(2);
+		
+		print ("posle increment 2;  x= "); print (x); print (eol);
+		
+		incX();
+		
+		print (x);
+	}
+}
+

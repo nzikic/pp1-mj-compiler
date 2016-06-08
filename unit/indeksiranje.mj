@@ -1,0 +1,14 @@
+program P
+	int x, y;
+	int a[];
+	
+{
+	void main () 
+	{
+		a = new int[5]; 
+		
+		a[0] = 20;
+		a[a[0]-20/5-16]++;
+		print(a[0]);
+	}
+}

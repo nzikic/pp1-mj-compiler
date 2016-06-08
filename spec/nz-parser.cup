@@ -1,0 +1,2891 @@
+package nzikic.pp1;
+
+import java_cup.runtime.*;
+import rs.etf.pp1.mj.runtime.Code;
+import org.apache.log4j.*;
+
+import nzikic.pp1.util.Result;
+import nzikic.pp1.util.Tree;
+import nzikic.pp1.util.Node;
+import nzikic.pp1.util.Count;
+import nzikic.pp1.util.Codegen;
+
+import rs.etf.pp1.symboltable.*;
+import rs.etf.pp1.symboltable.concepts.*;
+import rs.etf.pp1.symboltable.factory.*;
+import rs.etf.pp1.symboltable.structure.*;
+import rs.etf.pp1.symboltable.visitors.DumpSymbolTableVisitor;
+
+import java.util.Stack;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.List;
+import java.util.LinkedList;
+import java.util.Iterator;
+
+scan with
+{:
+    // presretanje dohvatanja novog tokena
+    Symbol s = this.getScanner().next_token();
+    return s;
+:}
+
+init with
+{:
+    Tab.init(); // universe scope
+    initParser();
+:}
+
+parser code
+{:
+    boolean bErrorDetected = false;
+    boolean bMainDefined = false;
+    boolean bReturnPresent = false;
+
+    Logger log = Logger.getLogger(getClass());
+
+    Count count = new Count();
+
+    static Struct   boolType;
+    static Struct   stringType;
+    static Obj      boolObj;
+    static Obj      stringObj;
+
+    int             numberOfVarsInDecl = 0;
+    boolean         varDeclError = false;
+
+    Obj             currentType;
+    String          currentTypeString;
+    int             currentTypeLine;
+    Stack<Obj>      currentTypeStack = new Stack<Obj>();
+
+    Obj             currentClass;
+    String          currentClassString;
+    Obj             extendsClass;
+    Obj             extendsClassString;
+    Obj             parentClass = null;
+    int             cntClassConstruct = 0;
+    Tree<Obj>       classInheritanceTree = null;                        // Inheritance tree
+    List<Obj>       classObjList = new LinkedList<Obj>();               // Linked list of all class Obj nodes
+    List<String>    listOfClassNames = new LinkedList<String>();        // Linked list of all class names
+    List<Obj>       listInheritedMethodObj = new LinkedList<Obj>();     // Linked list of inherited methods
+
+    Obj             currentMethodDeclarationObj = Tab.noObj;        // Funkcija koja se obradjuje
+    boolean         bIsOverriding = false;                          // Redefinisanje funkcije
+    int             brojFormalnogParametra = 0;                     // ...overriding funkcije koji se obradio
+    List<Obj>       formalniParametri = new LinkedList<Obj>();      // Formalni parametri overriding funkcije koja se obradjuje
+    Iterator<Obj>   formIterator;                                   // Formalni parametar
+
+    int superCallState = 1;
+
+    String id;
+
+    Struct startTerminalType = null;
+
+    Stack<Obj>          designatorObjStack = new Stack<Obj>();
+    boolean             bNeedThisPtr = false;                           // da li treba this da se gurne ispred designatora
+    Stack<String>       stackStrOut = new Stack<String>();              // stack Stringova za ispis izraza
+    Obj                 designator[] = new Obj[2];                      // designator[1] method/func, designator[0] everything else
+    Stack<Obj[]>        stackDesignator = new Stack<Obj[]>();           // designator niz se pushuje za ulancane designator izraze
+    Stack<String>       stackDesignatorString = new Stack<String>();    // stek designator stringova
+    Stack<Integer>      stackNumLine = new Stack<Integer>();            // broj linije za logovanje kasnije
+    Stack<Integer>      stackSizeNumLine = new Stack<Integer>();        // stek velicina steka za logovanje
+    Obj                 this_argument = Tab.noObj;
+
+    // za slucaj f(1, 2, g(3), 4)
+    Stack<Integer>          redniBrojParametra = new Stack<Integer>();          // stek rednog broja parametra funkcije koja se obradjuje
+    Stack<Iterator<Obj>>    parametriFunkcije = new Stack<Iterator<Obj>>();     // iterator parametra funkcije
+    Stack<Obj>              objOfFunction = new Stack<Obj>();
+
+    Stack<Integer>          beginAdrOfDesignatorStack = new Stack<Integer>();
+    Stack<Integer>          endAdrOfDesignatorStack = new Stack<Integer>();
+
+    Map<String, Struct>     arrayTypesMap = new HashMap<String, Struct>();  // Map of array structures
+    LinkedList<String>      stringConstantsList = new LinkedList<String>();  // Linked list of String constants (adr field of Obj node will map to iterator in the list)
+
+    Stack<Boolean>          inWhile = new Stack<Boolean>();
+    Stack<String>           condFactExpressionStringStack = new Stack<String>();  // za pamcenje stringa faktora izraza
+    Stack<Struct>           exprCondFactStack = new Stack<Struct>();              // za pamcenje strukture condition faktor expression-a
+
+    Stack<Boolean>          exprErrorStack = new Stack<Boolean>();          // da li je error ili nije i kada kod expr razvoja
+    Stack<Struct>           startTerminExprStack = new Stack<Struct>();     // struktura expression tip
+    Stack<String>           tipStack = new Stack<String>();                 // ime tipa expressiona koji ide na stek (za ispis)
+    Stack<Boolean>          termError = new Stack<Boolean>();               // errori kod terma kad se ekspanduju
+
+    Stack<Integer> lineNumStack = new Stack<Integer>();             // broj linije, za trace sluzi
+    Obj[] constructors = new Obj[2];                                // za biranje konstruktora 0 - podrazumevani, 1 - sa param
+
+
+    public void initParser()
+    {
+        boolType = new Struct(Struct.Bool);
+        boolObj = new Obj(Obj.Type, "bool", boolType);
+        Tab.currentScope().addToLocals(boolObj);
+
+        stringType = new Struct(Struct.Array);
+        stringType.setElementType(Tab.charType);
+        stringObj = new Obj(Obj.Type, "string", stringType);
+        Tab.currentScope().addToLocals(stringObj);
+
+        parentClass = new Obj(Obj.Type, action_obj.PARENT_CLASS, new Struct(Struct.Class, new HashTableDataStructure()));
+        extendsClass = parentClass;
+        classInheritanceTree = new Tree<Obj>(parentClass);  // create parent
+        classObjList.add(parentClass);
+
+        designator[0] = Tab.noObj;
+        designator[1] = Tab.noObj;
+        constructors[0] = Tab.noObj;
+        constructors[1] = Tab.noObj;
+
+        inWhile.push(false); 
+    }
+
+    // redefinisani metodi za prijavu gresaka:
+    public void report_fatal_error(String message, Object info)
+    {
+        done_parsing();
+        report_error(message, info);
+    }
+
+    public void syntax_error(Symbol cur_token)
+    {
+        report_error("Sintaksna greska ", cur_token);
+    }
+
+    public void syntax_error(String message)
+    {
+        report_error(message, null);
+    }
+
+    public void unrecovered_syntax_error(Symbol cur_token) throws java.lang.Exception
+    {
+        report_fatal_error("Fatalna greska, parsiranje se ne moze nastaviti. ", cur_token);
+    }
+
+    public void report_error(String message, Object info)
+    {
+        bErrorDetected = true;
+        Codegen.setError();
+        StringBuilder msg = new StringBuilder(message);
+        if (info instanceof Symbol)
+        {
+            String symVal = "";
+            if (info != null && ((Symbol)info).value != null)
+            {
+                symVal = ((Symbol)info).value.toString();
+            }
+            msg.append(" na liniji ").append(((Symbol)info).left).append(" - simbol: ").append(symVal);
+        }
+        log.error(msg);
+    }
+
+    public void report_info(String message, Object info)
+    {
+        StringBuilder msg = new StringBuilder(message);
+        if (info instanceof Symbol)
+        {
+            String symVal = "";
+            if (info != null && ((Symbol)info).value != null)
+            {
+                symVal = ((Symbol)info).value.toString();
+            }
+            msg.append(" na liniji ").append(((Symbol)info).left).append(" - simbol: ").append(symVal);
+        }
+        log.info(msg);
+    }
+
+    public void dump()
+    {
+        report_info("\n\n####### Symbol count dump #######", null);
+        // nivo A
+        report_info(count.globalVarDefinitions      + "\tGlobalih promenljivih.", null);
+        report_info(count.localVarDefinitionsInMain + "\tLokalnih promenljivih u main funkciji", null);
+        report_info(count.globalConstDefinitions    + "\tGlobalnih konstanti.", null);
+        report_info(count.globalArrays              + "\tGlobalnih nizova.", null);
+        // nivo B
+        report_info(count.globalFunctionDefinitions + "\tGlobalnih definicija funkcija.", null);
+        report_info(count.blockStatements           + "\tBlokova naredbi (ukljucujuci tela funkcija).", null);
+        report_info(count.functionCallsInMain       + "\tPoziva funkcija/metoda u main.", null);
+        report_info(count.formalFunctionArguments   + "\tFormalnih argumenata funkcija/metoda.", null);
+        // nivo C
+        report_info(count.classDefinitions          + "\tDefinicija klasa", null);
+        report_info(count.methodDefinitions         + "\tDefinicija metoda.", null);
+        report_info(count.fieldDefinitions          + "\tDefinicija polja.", null);
+        
+        report_info("\n\n####### Symbol table dump #######", null);
+        Tab.dump();
+    }
+:}
+
+action code
+{:
+    public static final String SEM_ERR_LINE             = "Semanticka greska na liniji: ";
+    public static final String SNTX_ERR_LINE            = "Sintaksna greska na liniji: ";
+    public static final String TYPE_NOT_FOUND           = " nije pronadjen tip - ";
+    public static final String NOT_A_TYPE               = " ime nije tip ";
+    public static final String IS_TYPE                  = " nadjen tip sa tim imenom - ";
+    public static final String DECLARED                 = " identifikator je vec deklarisan - ";
+    public static final String NOT_FOUND                = " nije pronadjena u tabeli simbola. ";
+    public static final String CONST_BAD_TYPE           = " - nedozvoljen tip pri deklaraciji konstante (dozvoljeni tipovi su: int, char, string, bool).";
+    public static final String TYPE_MISMATCH            = " ne poklapaju se tipovi ";
+    public static final String MUST_BE_INT              = " mora biti tipa int.";
+    public static final String MUST_BE_CHAR             = " mora biti tipa char.";
+    public static final String MUST_BE_BOOL             = " mora biti tipa bool.";
+    public static final String MUST_BE_STRING           = " mora biti tipa string.";
+    public static final String MUST_BE_VAR_CLASS_ELEM   = " mora biti promenljiva, polje klase ili element niza.";
+    public static final String ERR_RECOVER_TO           = " oporavak od greske do ";
+    public static final String EXTENDS_ERROR            = " pri izvodjenju iz ";
+    public static final String PARENT_CLASS             = "!ParentClass";
+    public static final String STRING_OP_ERROR          = " nedozvoljena operacija sa stringom, dozovljeno je samo koriscenje operatora +.";
+    public static final String NO_RETURN_STATEMENT      = " funkcija/metoda nema return naredbu";
+
+    public static final Integer eAdd = Code.add;
+    public static final Integer eSub = Code.sub;
+    public static final Integer eMul = Code.mul;
+    public static final Integer eDiv = Code.div;
+    public static final Integer eMod = Code.rem;
+
+    // Method, c-tor and function strings (@ u stringu zamenjuje _ u makrou)
+    public static final String              s_METH                      =   "@Meth";
+    public static final String              s_FUNC                      =   "@Func";
+    public static final String              sCONSTRUCTOR0               =   "Constructor0";
+    public static final String              sCONSTRUCTOR1               =   "Constructor1";
+    public static final String              s_CONSTRUCTOR0_METH         =   "@Constructor0@Meth";
+    public static final String              s_CONSTRUCTOR1_METH         =   "@Constructor1@Meth";
+    public static final String              sSUPER_CONSTRUCTOR0_METH    =   "super@Constructor0@Meth";
+    public static final String              sSUPER_CONSTRUCTOR1_METH    =   "super@Constructor1@Meth";
+    public static final String              s_ERROR                     =   "@ERROR";
+
+    public static final String sDETECT = "[Detektovanje koriscenja simbola] linija ";
+    enum eSymbolType
+    {
+        // Level A
+        Const,
+        GlobalVar,
+        LocalVar,
+        // Level B
+        Function,
+        StringRef,
+        FormalArg,
+        // Level C
+        Class,
+        Field,
+        Method
+    }
+
+    public void detectSymbolUsage(int line, Obj symbol, eSymbolType eType)
+    {
+        if (symbol == null || symbol == Tab.noObj)
+        {
+            return;
+        }
+
+        DumpSymbolTableVisitor dstv = new DumpSymbolTableVisitor();
+        symbol.accept(dstv);
+        String typeString = "";
+        String nameString = symbol.getName();
+
+        switch (eType)
+        {
+            case Field:
+                typeString = ": polje ";
+                break;
+            case Class:
+                typeString = ": instanciranje objekta ";
+                break;
+            case Const:
+                typeString = ": konstanta ";
+                break;
+            case FormalArg:
+                typeString = ": formalni parametar ";
+                break;
+            case Function:
+                typeString = ": funkcija ";
+                nameString = symbol.getName().split("@")[0];
+                break;
+            case GlobalVar:
+                typeString = ": globalna promenljiva ";
+                break;
+            case LocalVar:
+                typeString = ": lokalna promenljiva ";
+                break;
+            case Method:
+                typeString = ": metoda ";
+                nameString = symbol.getName().split("@")[0];
+                break;
+            case StringRef:
+                typeString = ": referenca na string ";
+                break;
+            default:
+                typeString = ": ERROR! ";
+                break;
+        }
+
+        parser.report_info(sDETECT + line + typeString + ">>>   "+ nameString + "   <<< dump: " + dstv.getOutput(), null);
+    }
+
+    /***********************************************************************
+    ** Za metode, funkcije, instanciranje klase je dovoljno detectSymbolUsage
+    ** Za ostale slucajeve moramo odrediti u kom je scope-u simbol i razresiti
+    ************************************************************************/
+    void determineAndDetectSymbolUsage(int line, Obj symbol)
+    {
+        if (symbol == null || symbol == Tab.noObj)
+        {
+            return;
+        }
+
+        if (symbol.getKind() == Obj.Con)
+        {
+            detectSymbolUsage(line, symbol, eSymbolType.Const);
+        }
+        else if (symbol.getKind() == Obj.Fld)
+        {
+            detectSymbolUsage(line, symbol, eSymbolType.Field);
+        }
+        else if (symbol.getKind() == Obj.Var)
+        {
+            // ovo moze biti lokalna promenljiva funkcije/metode, formalni parametar ili globalna promenljiva
+            if (parser.currentMethodDeclarationObj != Tab.noObj)
+            {
+                // u definiciji metode/funckije smo - proveri locals
+                boolean isInMethodScope = false;
+                Iterator<Obj> it = parser.currentMethodDeclarationObj.getLocalSymbols().iterator();
+                while (it.hasNext())
+                {
+                    Obj member = it.next();
+                    if (member.equals(symbol)) 
+                    {
+                        // nadjen u Locals metode/func
+                        isInMethodScope = true;
+                        if (member.getAdr() < parser.currentMethodDeclarationObj.getLevel())  // formalni parametar?
+                        {
+                            detectSymbolUsage(line, symbol, eSymbolType.FormalArg);
+                        }
+                        else
+                        {
+                            detectSymbolUsage(line, symbol, eSymbolType.LocalVar);
+                        }
+                        break;
+                    }
+                }
+        
+                if (!isInMethodScope)
+                {
+                    detectSymbolUsage(line, symbol, eSymbolType.GlobalVar);
+                }
+            }
+            else // nismo u definiciji metode, mora biti globalna promenljiva
+            {
+                detectSymbolUsage(line, symbol, eSymbolType.GlobalVar);
+            }
+        }
+        
+        // da li je referenca na string?
+        if (symbol.getType() == parser.stringType)
+        {
+            detectSymbolUsage(line, symbol, eSymbolType.StringRef);
+        }
+    }
+
+    /******************************************************
+     **  Constant declaration helper function
+     ******************************************************/
+    public void declareConstant(String conName, Obj rhs, int line)
+    {
+        Obj cnst = Tab.find(conName);
+
+        if (Tab.noObj == cnst)
+        {
+            Obj o = Tab.insert(Obj.Con, conName, parser.currentType.getType());
+            o.setAdr(rhs.getAdr());
+            parser.count.globalConstDefinitions++;
+        }
+        else if (Obj.Type == cnst.getKind())
+        {
+            report_error(line + IS_TYPE + conName);
+        }
+        else
+        {
+            report_error(line + DECLARED + conName);
+        }
+    }
+
+    /******************************************************
+     **  Variable declaration helper function
+     ******************************************************/
+    public void declareVariable(String varName, boolean arrayType, int line)
+    {
+        Obj var = Tab.find(varName);
+
+        if (Tab.noObj == var)   // obj doesn't exist - proceed
+        {
+            if (!arrayType)
+            {
+                Tab.insert(Obj.Var, varName, parser.currentType.getType());
+            }
+            else
+            {
+                if (!parser.arrayTypesMap.containsKey(parser.currentTypeString))        // add to array map if not there
+                {
+                    parser.arrayTypesMap.put(parser.currentTypeString, new Struct(Struct.Array, parser.currentType.getType()));
+                }
+                Tab.insert(Obj.Var, varName, parser.arrayTypesMap.get(parser.currentTypeString));
+                parser.count.globalArrays++;
+            }
+            parser.count.globalVarDefinitions++;
+        }
+        else if (var.getKind() == Obj.Type)
+        {
+            report_error(line + IS_TYPE + varName);
+        }
+        else
+        {
+            report_error(line + DECLARED + varName);
+        }
+    }
+
+    /******************************************************
+    **  Class field declaration helper function
+    ******************************************************/
+    public void inheritClass(Obj inheritingClass, Obj baseClass)
+    {
+       parser.classInheritanceTree.search(baseClass).insertChild(inheritingClass);
+    }
+
+    /******************************************************
+     **  Class field declaration (local variable) helper function
+     ******************************************************/
+    public void declareClassField(String fieldName, boolean arrayType, int line)
+    {
+        SymbolDataStructure classScopeLocals = Tab.currentScope().getLocals();
+        if (classScopeLocals != null && classScopeLocals.searchKey(fieldName) != null)
+        {
+            report_error(line + DECLARED + fieldName + " - u klasi.");
+        }
+        else
+        {
+            if (!arrayType)
+            {
+                Tab.insert(Obj.Fld, fieldName, parser.currentType.getType());
+            }
+            else
+            {
+                if (!parser.arrayTypesMap.containsKey(parser.currentTypeString))
+                {
+                    parser.arrayTypesMap.put(parser.currentTypeString, new Struct(Struct.Array, parser.currentType.getType()));
+                }
+                Tab.insert(Obj.Fld, fieldName, parser.arrayTypesMap.get(parser.currentTypeString));
+            }
+            parser.count.fieldDefinitions++;
+        }
+    }
+
+    /******************************************************
+     **  Method/function local var declaration helper function
+     ******************************************************/
+    public void declareMethodVar(Struct type, String varName, boolean arrayType, int typeLine, int nameLine)
+    {
+        if (arrayType && !parser.arrayTypesMap.containsKey(parser.currentTypeString))
+        {
+            parser.arrayTypesMap.put(parser.currentTypeString, new Struct(Struct.Array, type));
+        }
+
+        if (parser.bIsOverriding)
+        {
+            Iterator<Obj> it = parser.formalniParametri.iterator();
+            while (it.hasNext())
+            {
+                if(it.next().getName().equals(varName))
+                {
+                    report_error(nameLine + DECLARED + varName + " u trenutnom opsegu metode.");
+                    return;
+                }
+            }
+
+            parser.formalniParametri.add(new Obj(Obj.Var,
+                                                 varName,
+                                                 arrayType ? parser.arrayTypesMap.get(parser.currentTypeString) : type,
+                                                 parser.formalniParametri.size(),
+                                                 parser.formalniParametri.get(0).getLevel()));
+        }
+        else
+        {
+            if (Tab.currentScope().findSymbol(varName) != null)
+            {
+                report_error(nameLine + DECLARED + varName + " u trenutnom opsegu metode.");
+            }
+            Tab.insert(Obj.Var, varName, arrayType ? parser.arrayTypesMap.get(parser.currentTypeString) : type);
+
+            // main mora biti globalna funkcija
+            if (isMainDeclaration())
+            {
+                parser.count.localVarDefinitionsInMain++;
+            }
+        }
+    }
+
+    /******************************************************
+     **  Method/function formal param declaration helper function
+     ******************************************************/
+    public void declareMethodFormParam(Struct parType, String parName, boolean arrayType, int typeLine, int nameLine)
+    {
+        if(parser.bIsOverriding)
+        {
+            Iterator<Obj> iform = parser.formalniParametri.iterator();
+            // Da li je ime jedinstveno
+            while (iform.hasNext())
+            {
+                if (iform.next().getName().equals(parName))
+                {
+                    report_error(nameLine + DECLARED + parName + " u trenutnom opsegu metode " + parser.currentMethodDeclarationObj.getName().split("@")[0] + "." );
+                    // return;
+                }
+            }
+            if (arrayType && !parser.arrayTypesMap.containsKey(parser.currentTypeString))
+            {
+               parser.arrayTypesMap.put(parser.currentTypeString, new Struct(Struct.Array, parType));
+            }
+            // Prekoracenje parametara
+            if (parser.brojFormalnogParametra >= parser.currentMethodDeclarationObj.getLevel() || !parser.formIterator.hasNext())
+            {
+                parser.formalniParametri.add(new Obj(Obj.Var,
+                                                     parName,
+                                                     arrayType ? parser.arrayTypesMap.get(parser.currentTypeString) : parType,
+                                                     parser.formalniParametri.size(),
+                                                     parser.formalniParametri.get(0).getLevel()));
+                parser.brojFormalnogParametra++;    // jedan vise form parametar obradjen
+                parser.count.formalFunctionArguments++; //brojanje za ispis
+                report_error(typeLine + " visak parametara.");
+                report_error(typeLine + " redefinisuca metoda mora da ima isti potpis, iste parametre i istu povratnu vrednost kao metoda koju redefinise.");
+            }
+            // Nije prekoracenje
+            else
+            {
+                Obj tmp = parser.formIterator.next();
+                // Moze da se dodeli?
+                if (isAssignableTo( arrayType ? parser.arrayTypesMap.get(parser.currentTypeString) : parType, tmp.getType() ))
+                {
+                    parser.brojFormalnogParametra++;
+                    parser.formalniParametri.add( new Obj(tmp.getKind(),
+                                                          parName,
+                                                          arrayType ? parser.arrayTypesMap.get(parser.currentTypeString) : parType,
+                                                          tmp.getAdr(),
+                                                          tmp.getLevel()));
+                    parser.count.formalFunctionArguments++;
+                }
+                else    // Ne moze da se dodeli
+                {
+                    report_error(typeLine + " tip formalnog parametra " + parser.currentTypeString + (arrayType ? "[]" : "")
+                                          + " metode " + parser.currentClass.getName() + "::" + parser.currentMethodDeclarationObj.getName().split("@")[0]
+                                          + " ne slaze se sa tipom parametra metode koja se redefinise.");
+                    parser.brojFormalnogParametra++;
+                    parser.formalniParametri.add( new Obj(tmp.getKind(),
+                                                          parName,
+                                                          arrayType ? parser.arrayTypesMap.get(parser.currentTypeString) : parType,
+                                                          tmp.getAdr(),
+                                                          tmp.getLevel()));
+                    parser.count.formalFunctionArguments++; // brojanje za ispis
+                }
+            }
+        }
+        else   // Ako nije overriding
+        {
+            if (arrayType && !parser.arrayTypesMap.containsKey(parser.currentTypeString))   // Ako nema ovog niza u mapi nizova, ubaci ga
+            {
+                parser.arrayTypesMap.put(parser.currentTypeString, new Struct(Struct.Array, parType));
+            }
+
+            if (Tab.currentScope().findSymbol(parName) != null)
+            {
+                report_error(nameLine + DECLARED + parName + " u trenutnom opsegu metode " + parser.currentMethodDeclarationObj.getName().split("@")[0] + ".");
+            }
+            else
+            {
+                parser.currentMethodDeclarationObj.setLevel(this.parser.currentMethodDeclarationObj.getLevel()+1);  // Broj form parametara metode +1
+            }
+            Tab.insert(Obj.Var, parName, arrayType ? parser.arrayTypesMap.get(parser.currentTypeString) : parType);   // Ubaci formalni parametar
+            parser.count.formalFunctionArguments++; // brojanje za ispis
+        }
+    }
+
+    boolean isAssignableEqualTo(Struct src, Struct dst)
+    {
+        if (src == Tab.noType || dst == Tab.noType)
+        {
+            return false;
+        }
+        // Classes?
+        if (src.getKind() == Struct.Class && dst.getKind() == Struct.Class)
+        {
+            Node<Obj> dstClassNode  = parser.classInheritanceTree.search(getClassTypeNode(dst));
+            Obj srcClassObj         = getClassTypeNode(src);
+            // is src descendant of dst in class hierarchy?
+            if (parser.classInheritanceTree.searchNode(dstClassNode, srcClassObj) != null)
+            {
+                return true;
+            }
+            else if (dst == Tab.nullType)
+            {
+                return false;
+            }
+        }
+        // rest
+        if (src.assignableTo(dst))
+        {
+            return true;
+        }
+        // default
+        return false;
+    }
+
+    boolean isAssignableTo(Struct src, Struct dst)
+    {
+        if((src.getKind() == Struct.Class && dst.getKind() == Struct.Class) ||
+           (src.getKind() == Struct.Array && src.getElemType().getKind() == Struct.Class && dst.getKind() == Struct.Array && dst.getElemType().getKind() == Struct.Class))
+        {
+            if (Struct.Array == src.getKind())
+            {
+                Node<Obj> dstClassNode = parser.classInheritanceTree.search(getClassTypeNode(dst.getElemType()));
+                Obj srcClassObj = getClassTypeNode(src.getElemType());
+                // Is src descendant of dst in class hierarchy?
+                if (parser.classInheritanceTree.searchNode(dstClassNode, srcClassObj) != null)
+                {
+                    return true;
+                }
+            }
+            else
+            {
+                Node<Obj> dstClassNode = parser.classInheritanceTree.search(getClassTypeNode(dst));
+                Obj srcClassObj = getClassTypeNode(src);
+                // Is src descendant of dst in class hierarchy?
+                if (parser.classInheritanceTree.searchNode(dstClassNode, srcClassObj) != null)
+                {
+                    return true;
+                }
+            }
+        }
+        else
+        {
+            if (src.assignableTo(dst))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    Obj getClassTypeNode(Struct s)
+    {
+        Obj result = Tab.noObj;
+        Iterator<Obj> it = parser.classObjList.iterator();
+        while (it.hasNext())
+        {
+            Obj cls = it.next();
+            if (s == cls.getType())
+            {
+                result = cls;
+                break;
+            }
+        }
+
+        return result;
+    }
+
+    // ako se redefinise, da li je broj parametara isti
+    void checkNumberOfFormalParamsIfOverriding(int line)
+    {
+        if (parser.bIsOverriding && parser.currentMethodDeclarationObj.getLevel() != parser.brojFormalnogParametra)
+        {
+            report_error(line + " redefinisana metoda mora imati istu listu parametara kao i metoda koju redefinese.");
+        }
+    }
+
+    /**
+    * Trazi objekat sa imenom id u tabeli simbola. Prvo mora naci local var,
+    * ako ne nadje var, trazi metodu, pa ako ni to ne nadje trazi funkciju **/
+    Obj findObj(String id)
+    {
+        Obj obj                     = Tab.find(id);
+
+        if (obj == Tab.noObj)   obj = Tab.find(id + s_METH);
+
+        if (obj == Tab.noObj)   obj = Tab.find(id + s_FUNC);
+
+        return obj;
+    }
+
+    Obj findInheritedMethodWithName(String id)
+    {
+        Obj ret = Tab.noObj;
+
+        Iterator<Obj> it = parser.listInheritedMethodObj.iterator();
+        while (it.hasNext())
+        {
+            Obj extmet = it.next();
+            if (Obj.Meth == extmet.getKind() && extmet.getName().split("@")[0].equals(id))
+            {
+                ret = extmet;
+                break;
+            }
+        }
+
+        return ret;
+    }
+
+    void peekIntoDesignatorStack()
+    {
+        parser.designator[0] = parser.stackDesignator.peek()[0];
+        parser.designator[1] = parser.stackDesignator.peek()[1];
+    }
+
+    /** Provera da li je designator sa leve strane uglastih zagrada niz */
+    void checkIsDesignatorArrayType(int traceLine)
+    {
+        peekIntoDesignatorStack();
+        parser.stackDesignator.pop();
+        parser.designator[1] = Tab.noObj;   // resetuj jer ne sme da bude
+        if (parser.designator[0] != Tab.noObj)
+        {
+            // Da li se indeksira niz
+            if ((Obj.Var == parser.designator[0].getKind() || Obj.Fld == parser.designator[0].getKind()) && Struct.Array == parser.designator[0].getType().getKind())
+            {
+                parser.designator[0] = new Obj(Obj.Elem, "element niza @" + parser.designator[0].getName(), parser.designator[0].getType().getElemType());
+            }
+            else
+            {
+                report_error(traceLine + " designator " + parser.designator[0].getName() + " nije niz.");
+                parser.designator[0] = Tab.noObj;
+            }
+        }
+        else
+        {
+            report_error(traceLine + " Funkcija ili metoda se ne moze indeksirati");
+        }
+        
+        parser.stackDesignator.push(parser.designator.clone());
+    }
+
+    /***********************************************
+    ** dohvata iterator scopa metode koja se poziva
+    ************************************************/
+    Iterator<Obj> getFunctionParamIterator(Obj methodDesignator)
+    {
+        if (methodDesignator == Tab.noObj || methodDesignator != parser.currentMethodDeclarationObj)
+        {
+            return methodDesignator.getLocalSymbols().iterator();
+        }
+        else
+        {
+            return Tab.currentScope.values().iterator();
+        }
+    }
+
+    // da li je trenutna deklaracija metode main?
+    public boolean isMainDeclaration()
+    {
+        return parser.currentMethodDeclarationObj.getName().split("@")[0].equals("main");
+    }
+
+    // brojanje poziva funkcija/metoda u main funkciji
+    public void countFunctionCallsInMain()
+    {
+        if (isMainDeclaration())
+        {
+            parser.count.functionCallsInMain++;
+        }
+    }
+
+    void designatorAssignAction()
+    {
+        if (!parser.beginAdrOfDesignatorStack.isEmpty())    parser.beginAdrOfDesignatorStack.pop();
+        if (!parser.endAdrOfDesignatorStack.isEmpty())      parser.endAdrOfDesignatorStack.pop();
+    }
+
+    /**
+     * @param line - linija na kojoj je designator
+     * @param operation - ++ ili --
+     */
+    public void IncDecAction(int line, String operation, int increment)
+    {
+        if (!parser.endAdrOfDesignatorStack.isEmpty())
+        {
+            parser.endAdrOfDesignatorStack.pop();
+        }
+        String strDesignator = parser.stackDesignatorString.pop();
+        peekIntoDesignatorStack();
+        parser.stackDesignator.pop();
+
+        if (Obj.Fld != parser.designator[0].getKind() && Obj.Var != parser.designator[0].getKind() && Obj.Elem != parser.designator[0].getKind())
+        {
+            report_error(line + " designator " + strDesignator + " sa leve strane " + operation + MUST_BE_VAR_CLASS_ELEM + ".");
+        }
+        else if (Tab.intType != parser.designator[0].getType())
+        {
+            report_error(line + " designator " + strDesignator + MUST_BE_INT + ".");
+        }
+
+        Codegen.designatorIncDec(parser.designator[0],
+                                 !parser.beginAdrOfDesignatorStack.isEmpty() ? parser.beginAdrOfDesignatorStack.pop() : 0,  
+                                 increment);
+    }
+
+    public void report_error(String message)
+    {
+        parser.report_error(SEM_ERR_LINE + message, null);
+    }
+
+    public void syntax_error(String message)
+    {
+        parser.syntax_error(SNTX_ERR_LINE + message);
+    }
+
+    public <T> Result<T> operationActionResult(T t, String s)
+    {
+        return new Result<T>(t, s);
+    }
+:}
+
+terminal PROGRAM, COMMA, SEMI ;
+terminal PRINT, RETURN, VOID, CLASS, IF, ELSE, NEW, READ, WHILE, BREAK, EXTENDS, CONST ;
+terminal LBRACE, RBRACE, LPAREN, RPAREN, LBRACKET, RBRACKET;
+terminal String ASSIGN, PLUS, MINUS, MUL, DIV, MOD ;
+terminal String EQ, NEQ, GT, GE, LT, LE, AND, OR ;
+terminal String INC, DEC ;
+terminal DOT ;
+terminal Integer NUMBER ;
+terminal String IDENT, STRCONST ;
+terminal Boolean BOOLCONST ;
+terminal Character CHARCONST;
+
+non terminal Program, DeclarationList, DeclarationPart, MethodDeclList ;
+non terminal Struct Type ;
+non terminal Boolean ArrayType ;
+non terminal Obj ProgName ;
+non terminal VarDecl, VarIdentList, CommaVar ;
+non terminal ConstDecl, ConstIdentEqList, Comma_ident_assign_Rhs ;
+non terminal Obj Rhs ;
+non terminal ClassDecl ;
+non terminal Boolean ExtendsClassLbrace ;
+non terminal Obj ClassId ;
+non terminal InheritFields, ClassVarDeclList, ClassVarDecl, CommaClassVarIdentList, CommaClassVarPart ;
+non terminal InheritMethods, BracedClassMethodDeclList, ClassMethodDeclList ;
+non terminal ClassMethodDecl, ClassMethRetType_ident ;
+non terminal MethodDecl, FormParsOneOrMoreRparen, FormParsRparen, CommaFormParsList, CommaFormParam, MetVarDecl, MVarDecl, MVarDeclOneOrMore, CommaMetVar ;
+non terminal Boolean MetRetType_ident;
+non terminal Struct MetRetType ;
+non terminal StatementList, Statement, Matched, Unmatched ;
+non terminal IfCondition, IfCondition_matched_else, Else, While, WhileCondition, Condition ;
+non terminal Result <Object> ConditionList, ConditionTerm, ConditionOrTermList, ConditionOrTerm, ConditionAndFactList, ConditionFact, ConditionAndFact ;
+non terminal AssignStatement, CallStatement, IncDecStatement, ReturnStatement, BreakStatement, BlockStatement, ReadStatement, PrintStatement, MethodCall ;
+non terminal Integer OptionalNumber ;
+non terminal StmtFuncCall ;
+non terminal Result<Boolean> ConditionSecondOperand, ActualParamsRPAREN ;
+non terminal Result<Object> ActPars ;
+non terminal Result<Boolean> CommaExprParamList, CommaExprParam ;
+non terminal Result<Boolean> OptionalFuncCall, OptionalArrayFunctionExpression ;
+//non terminal Result<Boolean> OptionalConstructorActPars ;
+non terminal Result<Boolean> Designator, DesignatorTrunkList, DesignatorTrunk, DesignatorArrayExpr ;
+non terminal Result<Boolean> AddopTermList, MulopFactorList ;
+non terminal Result<Object> MulopFactor, AddopTerm ;
+non terminal Result<Struct>  Expr, Term, Factor ;
+non terminal Result<String>  Relop ;
+non terminal Result<Integer> Addop, Mulop ;
+
+Program ::= PROGRAM ProgName:p DeclarationList {: Codegen.setPtrToStringForConstants(); :} 
+            LBRACE MethodDeclList RBRACE
+                {:
+                    if (!parser.bMainDefined)
+                    {
+                        parser.report_error("Semanticka greska - main funkcija nije definisana.", null);
+                    }
+                    Tab.chainLocalSymbols(p);
+                    Tab.closeScope();
+                :}
+            ;
+
+ProgName::= IDENT:pName
+                {:
+                    RESULT = Tab.insert(Obj.Prog, pName, Tab.noType);
+                    Tab.openScope();
+                :}
+            ;
+
+DeclarationList ::= DeclarationList DeclarationPart
+                    |
+                    /* e */
+                    ;
+
+DeclarationPart ::= ConstDecl
+                    |
+                    VarDecl
+                    |
+                    ClassDecl
+                    ;
+
+ConstDecl ::= CONST Type:constType
+                {:
+                    if (parser.currentType.getType() != Tab.intType &&
+                        parser.currentType.getType() != Tab.charType &&
+                        parser.currentType.getType() != parser.stringType &&
+                        parser.currentType.getType() != parser.boolType)
+                    {
+                        report_error(constTypeleft + " " + parser.currentTypeString + CONST_BAD_TYPE);
+                    }
+                :}
+              IDENT:ident ASSIGN Rhs:rhs
+                {:
+                    declareConstant(ident, rhs, identleft);
+                    if (parser.currentType.getType() == parser.stringType)
+                    {
+                        Codegen.constantStringDeclaration(ident, parser.stringConstantsList);
+                    }
+                :}
+              ConstIdentEqList SEMI
+                {:
+                    parser.currentType = null;
+                    parser.currentTypeString = null;
+                    if (parser.varDeclError)
+                    {
+                        syntax_error(ERR_RECOVER_TO + ';');
+                        parser.varDeclError = false;
+                    }
+                    parser.numberOfVarsInDecl = 0;
+                :}
+              |
+              CONST error:err SEMI:s
+                {:
+                    if (parser.numberOfVarsInDecl > 0)  syntax_error(errleft + ERR_RECOVER_TO + ",");
+                    else                                syntax_error(errleft + ERR_RECOVER_TO + ";");
+
+                    parser.numberOfVarsInDecl = 0;
+                    if (parser.varDeclError)
+                    {
+                        //syntax_error(ERR_RECOVER_TO + ";");
+                        parser.varDeclError = false;
+                    }
+                :}
+              ;
+
+ConstIdentEqList ::= ConstIdentEqList Comma_ident_assign_Rhs
+                     |
+                     /* e */
+                     ;
+
+Comma_ident_assign_Rhs ::= COMMA IDENT:ident ASSIGN Rhs:rhs
+                            {:
+                                declareConstant(ident, rhs, identleft);
+                                parser.numberOfVarsInDecl++;
+                                if (parser.varDeclError)
+                                {
+                                    syntax_error(ERR_RECOVER_TO + ',');
+                                    parser.varDeclError = false;
+                                }
+                                if (parser.currentType.getType() == parser.stringType)
+                                {
+                                    Codegen.constantStringDeclaration(ident, parser.stringConstantsList);
+                                }
+                            :}
+                           |
+                           COMMA IDENT:id error {: parser.varDeclError = true; report_error(idleft + " ocekivana dodela posle identifikatora " + id);:}
+                           |
+                           COMMA:c     {: parser.varDeclError = true; report_error(cleft + " ocekivan identifikator posle ,"); :}
+                           ;
+
+// TODO rhs tip da se poklapa sa Type
+Rhs ::= NUMBER:n    
+            {: 
+                if (Tab.intType != parser.currentType.getType()) { report_error(nleft + TYPE_MISMATCH + ", " + n + MUST_BE_INT); }
+                RESULT = new Obj(Obj.Con, null, Tab.intType, n, 0); 
+            :}
+        |
+        CHARCONST:c 
+            {: 
+                if (Tab.charType != parser.currentType.getType()) { report_error(cleft + TYPE_MISMATCH + ", " + c + MUST_BE_CHAR); }
+                RESULT = new Obj(Obj.Con, null, Tab.charType, (int)c.charValue(), 0); 
+            :}
+        |
+        STRCONST:s  
+            {:
+                if (parser.stringType != parser.currentType.getType()) { report_error(sleft + TYPE_MISMATCH + ", " + s + MUST_BE_STRING); }
+                if (!parser.stringConstantsList.contains(s))
+                {
+                    parser.stringConstantsList.addLast(s);
+                }
+                RESULT = new Obj(Obj.Con, null, parser.stringType, parser.stringConstantsList.indexOf(s), 0);
+            :}
+        |
+        BOOLCONST:b 
+            {: 
+                if (parser.boolType != parser.currentType.getType()) { report_error(bleft + TYPE_MISMATCH + ", " + b + MUST_BE_BOOL); }
+                RESULT = new Obj(Obj.Con, null, parser.boolType, (b ? 1 : 0), 0); 
+            :}
+        ;
+
+VarDecl ::= Type:varType IDENT:varName ArrayType:isArray
+                {:
+                    declareVariable(varName, isArray, varNameleft);
+                    Code.dataSize++;
+                :}
+            VarIdentList SEMI
+                {:
+                    parser.currentType = null;
+                    parser.currentTypeString = null;
+                    if (parser.varDeclError)
+                    {
+                        syntax_error(ERR_RECOVER_TO + ';');
+                        parser.varDeclError = false;
+                    }
+                    parser.numberOfVarsInDecl = 0;  // reset counter for next VarDecl
+                :}
+            |
+            error:err SEMI:s
+                {:
+                    if (parser.numberOfVarsInDecl > 0) syntax_error(errleft + ERR_RECOVER_TO + ",");
+                    else                               syntax_error(errleft + ERR_RECOVER_TO + ";");
+
+                    parser.numberOfVarsInDecl = 0; // reset counter for next VarDecl
+                    if (parser.varDeclError)
+                    {
+                        syntax_error(ERR_RECOVER_TO + ";");
+                        parser.varDeclError = false;
+                    }
+                :}
+            ;
+
+VarIdentList ::= VarIdentList CommaVar
+                 |
+                 /* e */
+                 ;
+
+CommaVar ::= COMMA IDENT:varName ArrayType:isArray
+                {:
+                    declareVariable(varName, isArray, varNameleft);
+                    parser.numberOfVarsInDecl++;
+                    if (parser.varDeclError)
+                    {
+                        syntax_error(ERR_RECOVER_TO + ',');
+                        parser.varDeclError = false;
+                    }
+                    Code.dataSize++;
+                :}
+             |
+             COMMA error {: parser.varDeclError = true; :}
+             |
+             COMMA:c     {: parser.varDeclError = true; report_error(cleft + " ocekivan identifikator posle ,"); :}
+             ;
+
+Type ::= IDENT:typeName
+            {:
+                Obj type = Tab.find(typeName);
+                parser.currentType = type;
+                parser.currentTypeString = typeName;
+                parser.currentTypeLine = typeNameleft;
+
+                RESULT = Tab.noType;
+                if (type == Tab.noObj)
+                {
+                    report_error(typeNameleft + TYPE_NOT_FOUND + typeName);
+                }
+                else if (Obj.Type == type.getKind())
+                {
+                    RESULT = type.getType();
+                }
+                else
+                {
+                    report_error(typeNameleft + NOT_A_TYPE + typeName);
+                }
+            :}
+         ;
+
+ArrayType ::= LBRACKET RBRACKET {: RESULT = true; :}
+              |
+              /* e */           {: RESULT = false; :}
+              ;
+
+
+
+/********************************
+ ********************************
+ *         CLASS DECLARATION
+ ********************************
+ ********************************/
+ClassDecl ::= CLASS ClassId:cls ExtendsClassLbrace:bExt InheritFields ClassVarDeclList BracedClassMethodDeclList RBRACE
+                    {:
+                        parser.count.classDefinitions++;
+                        parser.superCallState = 1;
+
+                        Iterator<Obj> it = parser.listInheritedMethodObj.iterator();
+                        while (it.hasNext())
+                        {
+                            Obj meth = it.next();
+                            Obj chain = Tab.insert(meth.getKind(), meth.getName(), meth.getType());
+                            chain.setAdr(meth.getAdr());
+                            chain.setLevel(meth.getLevel());
+                            Tab.openScope();
+                            Iterator<Obj> itMethLocals = meth.getLocalSymbols().iterator();
+                            Obj this_ = itMethLocals.next();    // this mora da bude prvi
+                            Tab.insert(this_.getKind(), this_.getName(), this_.getType());
+                            while (itMethLocals.hasNext())
+                            {
+                                Obj local = itMethLocals.next();
+                                Tab.insert(local.getKind(), local.getName(), local.getType());
+                            }
+                            Tab.chainLocalSymbols(chain);
+                            chain.setLevel(meth.getLevel());
+                            Tab.closeScope();
+                        }
+                        parser.listInheritedMethodObj.clear();
+                        
+                        if (cls != Tab.noObj)
+                        {
+                            Tab.chainLocalSymbols(cls.getType());
+                        }
+                        Tab.closeScope();
+                    :}
+                |
+                CLASS error RBRACE:rb
+                ;
+
+ClassId ::= IDENT:cls 
+            // samo ubaci u tabelu simbola i setuj trenutne promenljive
+            {:
+                parser.listOfClassNames.add(cls);
+                parser.cntClassConstruct = 0;
+                Obj c = Tab.find(cls);
+
+                if (Tab.noObj == c)
+                {
+                    parser.currentClass = Tab.insert(Obj.Type, cls, new Struct(Struct.Class));
+                    Tab.openScope();
+                    parser.classObjList.add(parser.currentClass);
+                    Codegen.addClassTypeObject(parser.currentClass);
+                }
+                else
+                {
+                    report_error(clsleft + DECLARED + cls);
+                    parser.currentClass = Tab.insert(Obj.Type, cls+"@ClassNameERROR", new Struct(Struct.Class));
+                    Tab.openScope();
+                }
+
+                parser.currentClassString = cls;
+                RESULT = parser.currentClass;
+            :}
+            ;
+
+ExtendsClassLbrace ::=  EXTENDS Type:t LBRACE
+                            {:
+                                RESULT = true;
+                                boolean bSuccess = false;
+
+                                parser.extendsClass = Tab.find(parser.currentTypeString);
+
+                                // prilikom greske, klasa se dodaje u drvo nasledjivanja ispod root klase
+                                if (parser.currentTypeString.equals(parser.currentClassString))
+                                {
+                                    report_error(tleft + " klasa ne moze da nasledi samu sebe.");
+                                }
+                                else if (Tab.noObj == parser.extendsClass)
+                                {
+                                    report_error(tleft + EXTENDS_ERROR + parser.currentTypeString + NOT_A_TYPE);
+                                }
+                                else if (Obj.Type == parser.extendsClass.getKind() && Struct.Class == parser.extendsClass.getType().getKind())
+                                {
+                                    // nasledjeni tip je klasa, dodaj u drvo nasledjivanja
+                                    bSuccess = true;
+                                }
+                                else
+                                {
+                                    report_error(tleft + EXTENDS_ERROR + parser.currentTypeString + " tip nije klasni.");
+                                }
+
+                                inheritClass(parser.currentClass, (bSuccess ? parser.extendsClass : parser.parentClass));
+                            :}
+                        |
+                        EXTENDS LBRACE:lb // error state
+                            {:
+                                RESULT = false;
+                                parser.extendsClass = Tab.noObj;
+                                inheritClass(parser.currentClass, parser.parentClass);
+                                report_error(lbleft + " fali tip koji se nasledjuje.");
+                            :}
+                        |
+                        error LBRACE:lb
+                            {:
+                                RESULT = false;
+                                parser.extendsClass = Tab.noObj;
+                                inheritClass(parser.currentClass, parser.parentClass);
+                                syntax_error(lbleft + ERR_RECOVER_TO + "{");
+                            :}
+                        |
+                        LBRACE
+                            {:
+                                RESULT = false;
+                                parser.extendsClass = Tab.noObj;
+                                inheritClass(parser.currentClass, parser.parentClass);
+                            :}
+                        ;
+
+InheritFields ::=   /* e */
+                        {:
+                            Tab.insert(Obj.Fld, ".vftp", Tab.intType);
+
+                            //if (parser.extendsClass != parser.parentClass)
+                            if (parser.extendsClass != Tab.noObj)
+                            {
+                                Iterator<Obj> it = parser.extendsClass.getType().getMembers().iterator();
+                                while (it.hasNext())
+                                {
+                                    Obj tmp = it.next();
+                                    if (tmp.getKind() == Obj.Fld)
+                                    {
+                                        Tab.insert(tmp.getKind(), tmp.getName(), tmp.getType());
+                                    }
+                                }
+                            }
+                        :}
+                    ;
+
+ClassVarDeclList ::= ClassVarDeclList ClassVarDecl
+                     |
+                     /* e */ 
+                     ;
+
+ClassVarDecl ::=    Type:t IDENT:id ArrayType:bIsArray
+                        {: declareClassField(id, bIsArray, idleft); :}
+                    CommaClassVarIdentList SEMI
+                        {:
+                            parser.currentType = null;
+                            parser.currentTypeString = null;
+                            if (parser.varDeclError)
+                            {
+                                syntax_error(ERR_RECOVER_TO + ";");
+                                parser.varDeclError = false;
+                            }
+                            parser.numberOfVarsInDecl = 0; // reset counter for next VarDecl or ClassVarDecl
+                        :}
+                    |
+                    error SEMI:s
+                        {: 
+                            if (parser.numberOfVarsInDecl > 0)  syntax_error(sleft + ERR_RECOVER_TO + ",");
+                            else                                syntax_error(sleft + ERR_RECOVER_TO + ";");
+
+                            parser.numberOfVarsInDecl = 0;
+                            if (parser.varDeclError)
+                            {
+                                syntax_error(ERR_RECOVER_TO + ";");
+                                parser.varDeclError = false;
+                            }
+                        :}
+                    |
+                    error:e 
+                        {:
+                            syntax_error(eleft + ERR_RECOVER_TO + "{ ili }"); 
+                            parser.numberOfVarsInDecl = 0;
+                            parser.varDeclError = false;
+                        :}
+                    ;
+
+CommaClassVarIdentList ::=  CommaClassVarIdentList CommaClassVarPart
+                            |
+                            /* e */
+                            ;
+
+CommaClassVarPart ::=   COMMA IDENT:id ArrayType:bIsArray
+                            {:
+                                declareClassField(id, bIsArray, idleft);
+                                parser.numberOfVarsInDecl++;
+                                if (parser.varDeclError)
+                                {
+                                    syntax_error(ERR_RECOVER_TO + ",");
+                                    parser.varDeclError = false;
+                                }
+                            :}
+                        |
+                        COMMA error {: parser.varDeclError = true; :}
+                        |
+                        COMMA:c {: parser.varDeclError = true; report_error(cleft + " ocekivan identifikator posle ,"); :}
+                        ;
+
+BracedClassMethodDeclList ::=   InheritMethods
+                                    {:
+                                        // dodaj sva polja (promenljive) u Struct cvor klase
+                                        Tab.chainLocalSymbols(parser.currentClass.getType());
+                                    :}
+                                LBRACE ClassMethodDeclList RBRACE
+                                |
+                                InheritMethods
+                                ;
+
+InheritMethods ::=  /* e */
+                    {:
+                        /**
+                         * Sve nasledjene metode i konstruktori idu u listIheritedMethodObj listu, tek se kasnije dodaju u Struct cvor klase (na kraju definicije klase)
+                         */
+                        if (parser.extendsClass == Tab.noObj)
+                        {
+                            parser.listInheritedMethodObj = new LinkedList<Obj>();
+                        }
+                        else
+                        {
+                            Iterator<Obj> it = parser.extendsClass.getType().getMembers().iterator();
+                            while (it.hasNext())
+                            {
+                                Obj clsMember = it.next();
+                                if (clsMember.getKind() == Obj.Meth)
+                                {
+                                    parser.listInheritedMethodObj.add(clsMember);
+                                }
+                            }
+                        }
+                    :}
+                    ;
+
+ClassMethodDeclList ::= ClassMethodDeclList ClassMethodDecl
+                        |
+                        /* e */
+                        ;
+
+ClassMethodDecl ::= ClassMethRetType_ident LPAREN FormParsRparen MetVarDecl
+                        {:
+                            if (parser.bIsOverriding)
+                            {
+                                // reset scope
+                                Tab.closeScope();
+                                Tab.openScope();
+                                // dodaj formalne parametre samo 
+                                Iterator<Obj> it = parser.formalniParametri.iterator();
+                                parser.currentMethodDeclarationObj.setLevel(parser.brojFormalnogParametra);
+                                while (it.hasNext())
+                                {
+                                    Obj obj = it.next();
+                                    Tab.insert(obj.getKind(), obj.getName(), obj.getType());
+                                }
+                            }
+                            
+                            Codegen.methodEnter(parser.currentMethodDeclarationObj);
+
+                            parser.bReturnPresent = false;
+                            parser.count.methodDefinitions++;
+                            Tab.chainLocalSymbols(parser.currentMethodDeclarationObj);
+                        :}
+                    LBRACE StatementList RBRACE:srb
+                        {:
+                            if (parser.bReturnPresent == false && parser.currentMethodDeclarationObj.getType() != Tab.noType)
+                            {
+                                report_error(srbleft + NO_RETURN_STATEMENT);
+                            }
+
+                            Codegen.functionDeclEnd(parser.currentMethodDeclarationObj);
+                            
+                            parser.bIsOverriding = false;
+                            parser.formalniParametri = new LinkedList<Obj>();
+                            parser.currentMethodDeclarationObj = Tab.noObj;
+                            Tab.closeScope();
+                            parser.count.blockStatements++;
+                        :}
+                    ;
+
+ClassMethRetType_ident ::=  MetRetType:mrt IDENT:id
+                            {:
+                                Iterator<Obj> it = Tab.currentScope().values().iterator();
+                                Iterator<Obj> extIt = parser.listInheritedMethodObj.iterator();
+                                Boolean bJedinstvena = true;
+                                
+                                parser.currentMethodDeclarationObj = Tab.noObj;
+                                
+                                // ako ovo nije konstruktor
+                                if ( !id.equals(parser.currentClass.getName()) )
+                                {
+                                    // prodji kroz vec definisane metode i kroz nasledjene metode
+                                    while (it.hasNext() || extIt.hasNext())
+                                    {
+                                       Obj obj = it.hasNext() ? it.next() : extIt.next();    // prvo idi kroz nase metode pa onda kroz nasledjene
+                                       // ako se metoda koja se definise zove isto kao vec postojeca metoda
+                                       if (obj.getName().equals(id+s_METH) && obj.getKind() == Obj.Meth)
+                                       {
+                                           bJedinstvena = false;
+                                           // this metode koju gledamo != base class => definisana je vec ova metoda, moze samo metoda natklase da se definise
+                                           if ( obj.getLocalSymbols().iterator().next().getType() != parser.extendsClass.getType() )
+                                           {
+                                               report_error(idleft + DECLARED + id);
+                                               parser.bIsOverriding = false;
+                                               parser.currentMethodDeclarationObj = Tab.insert(Obj.Meth, obj.getName().split("@")[0] + "@ERROR", mrt);  // napravi Obj cvor metode
+                                               Tab.chainLocalSymbols(parser.currentClass.getType());    // dodaj u klasu
+                                               parser.currentMethodDeclarationObj.setLevel(1);
+                                               parser.brojFormalnogParametra = 1;
+                                               Tab.openScope();                                             // open scope za metodu
+                                               Tab.insert(Obj.Var, "this", parser.currentClass.getType());  // ubaci this u metodu
+                                           }
+                                           else
+                                           {
+                                               if ( !isAssignableTo(mrt, obj.getType()) )   // nekompatibilni tipovi
+                                               {
+                                                   report_error(mrtleft + " redefinisanje metoda " + parser.extendsClassString + "::" + id + " moraju biti kompatibilni po tipu.");
+                                                   parser.bIsOverriding = false;
+                                                   parser.currentMethodDeclarationObj = Tab.insert(Obj.Meth, obj.getName().split("@")[0] + "@ERROR", mrt); // napravi obj cvor metode
+                                                   Tab.chainLocalSymbols(parser.currentClass.getType());
+                                                   parser.currentMethodDeclarationObj.setLevel(1);
+                                                   parser.brojFormalnogParametra = 1;
+                                                   Tab.openScope();
+                                                   Tab.insert(Obj.Var, "this", parser.currentClass.getType());
+                                               }
+                                               else // kompatibilni tipovi - redefinisanje metode uspesno!
+                                               {
+                                                   /* ovde se napravi novi covr za metodu i ubaci se u klasu.
+                                                    * Tom prilikom se svi parametri prekopiraju, sve se setuje kako treba, 
+                                                    * ali mi jos u definiciji ove funkcije nismo stigli do formalnih parametara.
+                                                    * Zato imamo listu parser.formalniParametri i propratne promenljive da pratimo kroz
+                                                    * definisanje metode da li je sve u redu i da li se svi parametri poklapaju.
+                                                    * Nije dovoljno samo da se metode zovu isto i vracaju kompatibilne tipove. */
+                                                   Obj chain = Tab.insert(obj.getKind(), obj.getName(), mrt);   // ubaci metodu u scope
+                                                   Tab.chainLocalSymbols(parser.currentClass.getType());
+                                                   Tab.openScope();                                                 // otvori scope za metodu
+                                                   Iterator<Obj> itMethLocals = obj.getLocalSymbols().iterator();   // ubaci sve lokalne clanove
+                                                   while (itMethLocals.hasNext())
+                                                   {
+                                                       Obj tmp1 = itMethLocals.next();
+                                                       Tab.insert(tmp1.getKind(), tmp1.getName(), tmp1.getType());
+                                                   }
+                                                   Tab.chainLocalSymbols(chain);        // ulancaj locals u Obj cvor metode
+                                                   chain.setLevel(obj.getLevel());
+                                                   extIt.remove();  // obj smo uzeli iz ext klase cim je redefinicija
+                                                   parser.bIsOverriding = true;
+                                                   parser.currentMethodDeclarationObj = chain;  // trenutna metoda
+                                                   
+                                                   // u kontrolnu listu formalnih parametara ubaci samo this
+                                                   Obj thisObj = obj.getLocalSymbols().iterator().next();
+                                                   parser.formalniParametri = new LinkedList<Obj>();
+                                                   parser.formalniParametri.add(thisObj);
+                                                   parser.brojFormalnogParametra = 1;   // obradjen 1 parametar
+                                                   parser.formIterator = obj.getLocalSymbols().iterator();
+                                                   parser.formIterator.next();
+                                               }
+                                           }
+                                           
+                                           break;   // nadjena metoda koja se redefinise
+                                           
+                                       } // metoda se zove isto
+                                    } // while
+                                    
+                                    if (bJedinstvena)
+                                    {
+                                        parser.bIsOverriding = false;
+                                        parser.currentMethodDeclarationObj = Tab.insert(Obj.Meth, id + s_METH, mrt);
+                                        Tab.chainLocalSymbols(parser.currentClass.getType());
+                                        parser.currentMethodDeclarationObj.setLevel(1);
+                                        parser.brojFormalnogParametra = 1;
+                                        Tab.openScope();
+                                        Tab.insert(Obj.Var, "this", parser.currentClass.getType());
+                                    }
+                                } // sta ako je konstruktor?! dodaj...
+                            :}
+                            ;
+
+
+
+
+/********************************
+ ********************************
+ *         METHOD DECLARATION
+ ********************************
+ ********************************/
+
+MethodDeclList ::= MethodDeclList MethodDecl
+                   |
+                   /* e */
+                   ;
+
+MethodDecl ::= MetRetType_ident:bSuccess LPAREN FormParsRparen MetVarDecl LBRACE
+                {:
+                    Tab.chainLocalSymbols(parser.currentMethodDeclarationObj);
+                    parser.count.globalFunctionDefinitions++;
+                    Codegen.functionDeclBegin(parser.currentMethodDeclarationObj, parser.id.toString().equals("main"));
+                    parser.bReturnPresent = false;
+                :}
+               StatementList RBRACE:rb
+                {:
+                    if (parser.id.equals("main"))
+                    {
+                        parser.bMainDefined = true;
+                    }
+
+                    if (parser.bReturnPresent == false && parser.currentMethodDeclarationObj.getType() != Tab.noType)
+                    {
+                        report_error(rbleft + NO_RETURN_STATEMENT);
+                    }
+
+                    Codegen.functionDeclEnd(parser.currentMethodDeclarationObj);
+                    
+                    Tab.closeScope();
+                    parser.count.blockStatements++;
+                    parser.currentMethodDeclarationObj = Tab.noObj; // reset current method
+                :}
+               ;
+
+MetRetType_ident ::= MetRetType:mrt IDENT:id
+                        {:
+                            RESULT = false;
+
+                            parser.id = id;
+                            if (Tab.noObj != Tab.find(id + s_FUNC) || 
+                                id.equals("ord") || id.equals("len") || id.equals("chr"))
+                            {
+                                report_error(idleft + DECLARED + id);
+                            }
+                            else if (id.equals("main") && !parser.currentTypeString.equals("void"))
+                            {
+                                report_error(mrtleft + " funkcija main mora imati povratni tip void.");
+                            }
+                            else // OK
+                            {
+                                RESULT = true;
+                            }
+
+                            String nameTrunk = RESULT ? s_FUNC : s_FUNC + s_ERROR;
+                            parser.currentMethodDeclarationObj = Tab.insert(Obj.Meth, id + nameTrunk, mrt);
+                            
+                            Codegen.setMethodCodeAdress(id, parser.currentMethodDeclarationObj);
+
+                            Tab.openScope();
+                            parser.currentMethodDeclarationObj.setLevel(0);
+                        :}
+                      ;
+
+MetRetType ::= Type:t 
+                    {:
+                        RESULT = t;
+                        // parser.currentMethodDeclarationObj = parser.currentType;
+                    :}
+                |
+                VOID
+                    {:
+                        RESULT = Tab.noType;
+                        parser.currentType = Tab.noObj;
+                        parser.currentTypeString = "void";
+                    :}
+                ;
+
+FormParsRparen ::=  FormParsOneOrMoreRparen:r // for error recovery to ')'
+                        {:
+                            // ako se redefinise, da li je broj parametara isti
+                            checkNumberOfFormalParamsIfOverriding(rleft);
+
+                            if (parser.currentMethodDeclarationObj.getName().equals("main"))
+                            {
+                                report_error(rleft + " metoda main mora biti bez parametara");
+                            }
+                        :}
+                    |
+                    RPAREN:r
+                        {:
+                            // ako se redefinise, da li je broj parametara isti
+                            checkNumberOfFormalParamsIfOverriding(rleft);
+                        :}
+                    ;
+
+FormParsOneOrMoreRparen ::= Type:t IDENT:id ArrayType:bArr
+                                {: declareMethodFormParam(t, id, bArr, tleft, idleft); :}
+                            CommaFormParsList RPAREN
+                            |
+                            error CommaFormParsList RPAREN:rp
+                                {: syntax_error(rpleft + ERR_RECOVER_TO + ","); :}
+                            ;
+
+CommaFormParsList ::=   CommaFormParsList CommaFormParam
+                        |
+                        /* e */
+                        ;
+
+CommaFormParam ::=  COMMA Type:t IDENT:id ArrayType:bArr
+                        {: declareMethodFormParam(t, id, bArr, tleft, idleft); :}
+                    |
+                    COMMA:c error
+                        {: syntax_error(cleft + ERR_RECOVER_TO + ", ili )"); :}
+                    |
+                    COMMA:c
+                        {: report_error(cleft + " ocekuje se formalni parametar"); syntax_error(cleft + ERR_RECOVER_TO + ", ili )"); :}
+                    ;
+
+MetVarDecl ::=   MetVarDecl MVarDecl
+                    |
+                    /* e */
+                    ;
+
+MVarDecl ::=    Type:t IDENT:id ArrayType:bArr
+                    {: declareMethodVar(t, id, bArr, tleft, idleft); :}
+                MVarDeclOneOrMore SEMI
+                |
+                error:e SEMI
+                    {: syntax_error(eleft + " [Lolakne promenljive] " + ERR_RECOVER_TO + ";."); :}
+                |
+                error:e 
+                    {: syntax_error(eleft + " [Lolakne promenljive] " + ERR_RECOVER_TO + "{."); :}
+                ;
+
+MVarDeclOneOrMore ::=   MVarDeclOneOrMore CommaMetVar
+                        |
+                        /* e */
+                        ;
+
+CommaMetVar ::= COMMA IDENT:id ArrayType:bArr
+                    {: declareMethodVar(parser.currentType.getType(), id, bArr, parser.currentTypeLine, idleft); :}
+                ;
+
+
+/********************************
+ ********************************
+ *        STATEMENT DECLARATION
+ ********************************
+ ********************************/
+ 
+StatementList ::=    StatementList Statement
+                     |
+                     /* e */
+                     ;
+
+Statement ::=   Matched:m 
+                |
+                Unmatched:u
+                ;
+
+Unmatched ::=   IfCondition Statement 
+                    {:
+                        Codegen.ELSEOrEndOfIFstmt(false);
+                        parser.superCallState = 1;
+                    :}
+                |
+                IfCondition_matched_else Unmatched
+                    {:
+                        Codegen.endOfELSEBranch();
+                        parser.superCallState = 1;
+                    :}
+                |
+                WhileCondition Unmatched
+                    {:
+                        parser.inWhile.pop();
+                        Codegen.whileIterationEnd();
+                        parser.superCallState = 1;
+                    :}
+                ;
+
+IfCondition ::= IF Condition
+                    {: 
+                        Codegen.ifCondition();
+                        parser.superCallState = 1;
+                    :}
+                |
+                IF error:e Condition
+                    {:
+                        syntax_error(eleft + " Nevalidna konstrukcija if naredbe." + ERR_RECOVER_TO + "(");
+                    :}
+                ;
+
+IfCondition_matched_else ::= IfCondition Matched Else ;
+
+Else ::=    ELSE 
+                {:
+                    Codegen.ELSEOrEndOfIFstmt(true);
+                :}
+            ;
+
+WhileCondition ::=  While
+                        {: Codegen.whileSaveConditionEvaluationAddress(); :}
+                    Condition
+                        {:
+                            parser.inWhile.push(true);
+                            Codegen.whileConditionEvaluation();
+                            parser.superCallState = 1;
+                        :}
+                    |
+                    While error:err //RAPREN?
+                        {:
+                            parser.inWhile.push(true);
+                            syntax_error(errleft + "[WHILE]" + ERR_RECOVER_TO + ").");
+                            parser.superCallState = 1;
+                        :}
+                    ;
+
+
+While ::=   WHILE ;
+
+
+            /********************************
+            ********************************
+            *        CONDITION DECLARATION
+            ********************************
+            ********************************/
+            Condition ::=   LPAREN ConditionList RPAREN
+                            |
+                            LPAREN error:e RPAREN
+                                {: syntax_error(eleft + "[Condition]" + ERR_RECOVER_TO + "')'"); :}
+                            ;
+
+            // OR
+            ConditionList ::= ConditionTerm:ct ConditionOrTermList:cotl     
+                                {: RESULT = operationActionResult(null, ct.getString() + cotl.getString()); :}
+                            ;
+
+            ConditionOrTermList ::= ConditionOrTermList:cotl ConditionOrTerm:cot 
+                                        {: RESULT = operationActionResult(null, cotl.getString() + cot.getString()); :}
+                                    |
+                                    /* e */
+                                        {: RESULT = operationActionResult(null, ""); :}
+                                    ;
+
+            ConditionOrTerm ::= OR ConditionTerm:ct
+                                    {:
+                                        Codegen.conditionOr();
+                                        RESULT = operationActionResult(null, " || " + ct.getString());
+                                    :}
+                                ;
+
+            // AND
+            ConditionTerm ::=   ConditionFact:cf ConditionAndFactList:cafl
+                                    {: RESULT = operationActionResult(null, cf.getString() + cafl.getString()); :}
+                                ;
+
+            ConditionAndFactList ::=    ConditionAndFactList:cafl ConditionAndFact:caf
+                                            {: RESULT = operationActionResult(null, cafl.getString() + caf.getString()); :}
+                                        |
+                                        /* e */
+                                            {: RESULT = operationActionResult(null, ""); :}
+                                        ;
+
+            ConditionAndFact ::= AND ConditionFact:cf
+                                    {:
+                                        Codegen.conditionAnd();
+                                        RESULT = operationActionResult(null, " && " + cf.getString()); 
+                                    :}
+                                ;
+
+            // Factor
+            ConditionFact ::=   Expr:e
+                                    {:
+                                        parser.condFactExpressionStringStack.push(e.getString());
+                                        parser.exprCondFactStack.push(e.getResult());
+                                    :}
+                                ConditionSecondOperand:cso
+                                    {:
+                                        if (false == cso.getResult() && parser.boolType != e.getResult())
+                                        {
+                                            report_error(eleft + " izraz " + parser.condFactExpressionStringStack.peek() + " mora biti tipa bool");
+                                        }
+
+                                        parser.exprCondFactStack.pop();
+                                        parser.condFactExpressionStringStack.pop();
+                                        RESULT = operationActionResult(null, e.getString() + cso.getString());
+                                    :}
+                                ;
+
+            ConditionSecondOperand ::=  Relop:r Expr:e
+                                            {:
+                                                // Nizovi
+                                                if (Struct.Array == e.getResult().getKind() && Struct.Array == parser.exprCondFactStack.peek().getKind())
+                                                {
+                                                    if (r.getString().equals("==") || r.getString().equals("!="))
+                                                    {
+                                                        Codegen.exprRelopExprArrays(r.getResult(), e.getResult().getElemType() == Tab.charType);
+                                                    }
+                                                    else
+                                                    {
+                                                        report_error(rleft + " Nizovi se mogu porediti samo sa == ili !=");
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    Codegen.exprRelopExpr(r.getResult());
+                                                }
+
+                                                // Klase
+                                                if (Struct.Class == e.getResult().getKind() && Struct.Class == parser.exprCondFactStack.peek().getKind())
+                                                {
+                                                    if (r.getString().equals("==") || r.getString().equals("!="))
+                                                    {
+                                                        Obj firstObj  = getClassTypeNode(parser.exprCondFactStack.peek());
+                                                        Obj secondObj = getClassTypeNode(e.getResult());
+                                                        Node<Obj> firstNodeObj  = parser.classInheritanceTree.search(firstObj);
+                                                        Node<Obj> secondNodeObj = parser.classInheritanceTree.search(secondObj);
+                                                        // da li neka klasa nasledjuje drugu?
+                                                        if (parser.classInheritanceTree.searchNode(firstNodeObj, secondObj) == null &&
+                                                            parser.classInheritanceTree.searchNode(secondNodeObj, firstObj) == null)
+                                                        {
+                                                            report_error(rleft + " Izrazi " + parser.condFactExpressionStringStack.peek() + " i " + e.getString() + " nisu kompatibilni po tipu.");
+                                                        }
+                                                    }
+                                                    else
+                                                    {
+                                                        report_error(rleft + " Klasni objekti se mogu porediti samo sa == ili !=");
+                                                    }
+                                                }
+                                                // da li su kompatibilni
+                                                else if (!e.getResult().compatibleWith(parser.exprCondFactStack.peek()))
+                                                {
+                                                    report_error(rleft + " Izrazi " + parser.condFactExpressionStringStack.peek() + " i " + e.getString() + " nisu kompatibilni po tipu.");
+                                                }
+
+                                                RESULT = operationActionResult(true, r.getString() + " " + e.getString());
+                                            :}
+                                        |
+                                        /* e  no second operand */
+                                            {: RESULT = operationActionResult(false, ""); :}
+                                        ;
+
+
+
+
+
+Matched ::= IfCondition_matched_else Matched
+                {:
+                    Codegen.endOfELSEBranch();
+                    parser.superCallState += 1;
+                :}
+            |
+            WhileCondition Matched
+                {:
+                    Codegen.whileIterationEnd();
+                    parser.inWhile.pop();
+                    parser.superCallState += 1;
+                :}
+
+            /* other matched */
+            |
+            BreakStatement
+            |
+            CallStatement
+            |
+            AssignStatement
+            |
+            BlockStatement
+            |
+            IncDecStatement
+            |
+            ReturnStatement
+            ;
+
+BreakStatement ::=  BREAK:b SEMI
+                    {:
+                        if (false == parser.inWhile.peek())
+                        {
+                            report_error(bleft + " Naredna break se moze koristiti samo unutar while petlje.");
+                        }
+                        else
+                        {
+                            Codegen.breakStatement();
+                        }
+                    :}
+                    ;
+
+CallStatement ::=   ReadStatement
+                    |
+                    PrintStatement
+                    |
+                    MethodCall
+                    ;
+
+AssignStatement ::= Designator:d ASSIGN:a
+                        {: designatorAssignAction(); :}
+                    Expr:e SEMI:semi
+                        {:
+                            String strExpr = e.getString();
+                            String strDesignator = parser.stackDesignatorString.pop();
+                            peekIntoDesignatorStack();
+                            parser.stackDesignator.pop();
+                            if (Obj.Fld != parser.designator[0].getKind() && Obj.Var != parser.designator[0].getKind() && Obj.Elem != parser.designator[0].getKind())
+                            {
+                                report_error(eleft + " designator " + strDesignator + " sa leve strane = mora biti promenljiva, polje klase ili element niza.");
+                            }
+                            else if (!isAssignableEqualTo(e.getResult(), parser.designator[0].getType()))
+                            {
+                                report_error(aleft + " izrazi sa leve (" + parser.designator[0].getName() +") i desne strane (" + e.getString()+ ") operatora = moraju biti kompatibilni po tipu.");
+                            }
+                            else
+                            {
+                                Codegen.designatorAssignExpr(parser.designator[0]);
+                            }
+                        :}
+                    |
+                    Designator:d ASSIGN:a
+                        {: designatorAssignAction(); :}
+                    error:e SEMI:s
+                        {:
+                            String strDesignator = parser.stackDesignatorString.pop();
+                            peekIntoDesignatorStack();
+                            parser.stackDesignator.pop();
+                            if (Obj.Fld != parser.designator[0].getKind() && Obj.Var != parser.designator[0].getKind() && Obj.Elem != parser.designator[0].getKind())
+                            {
+                                report_error(eleft + " designator " + strDesignator + " sa leve strane = mora biti promenljiva, polje klase ili element niza.");
+                            }
+                            syntax_error(eleft + "[ASSIGN]" + ERR_RECOVER_TO + ";");
+                        :}
+                    |
+                    error:e ASSIGN Expr SEMI
+                        {: syntax_error(eleft + "[ASSIGN]" + ERR_RECOVER_TO + ";"); :}
+                    |
+                    error:e1 ASSIGN error SEMI
+                        {: syntax_error(e1left + "[ASSIGN]" + ERR_RECOVER_TO + ";"); :}
+                    ;
+
+BlockStatement ::=  LBRACE {: parser.superCallState = 1; :} 
+                    StatementList 
+                    RBRACE
+                        {: parser.count.blockStatements++; :}
+                    ;
+
+IncDecStatement ::= Designator:d INC:inc SEMI:s
+                        {:
+                            IncDecAction(incleft, inc, 1);
+                            parser.superCallState = 1;
+                        :}
+                    |
+                    Designator:d DEC:dec SEMI:s
+                        {:
+                            IncDecAction(decleft, dec, -1);
+                            parser.superCallState = 1;
+                        :}
+                    ;
+
+ReturnStatement ::= RETURN Expr:e SEMI
+                        {:
+                            String output = parser.currentMethodDeclarationObj.getName().endsWith(s_METH) ? "metode." : "funkcije.";
+                            if (parser.currentMethodDeclarationObj.getType() == Tab.noType)
+                            {
+                                report_error(eleft + " funkcija je deklarisana kao void.");
+                            }
+                            else if (false == isAssignableTo(e.getResult(), parser.currentMethodDeclarationObj.getType()))
+                            {
+                                report_error(eleft + " tip izraza " + e.getString() + " ne odgovara povratnom tipu " + output);
+                            }
+
+                            parser.bReturnPresent = true;
+                            Codegen.returnStatement();
+                        :}
+                    |
+                    RETURN SEMI:s
+                        {:
+                            if (Tab.noType != parser.currentMethodDeclarationObj.getType())
+                            {
+                                String output = parser.currentMethodDeclarationObj.getName().endsWith(s_METH) ? "metoda " : "funkcija ";
+                                output += parser.currentMethodDeclarationObj.getName().split("@")[0];
+                                report_error(sleft + " ocekivan izraz uz return; " + output + " nije tipa void.");
+                            }
+                            parser.bReturnPresent = true;
+                            Codegen.returnStatement();
+                        :}
+                    ;
+
+ReadStatement ::=   READ LPAREN:lp Designator:d RPAREN SEMI
+                        {:
+                            designatorAssignAction();
+                            
+                            String strDesignator = parser.stackDesignatorString.pop();
+                            peekIntoDesignatorStack();
+                            parser.stackDesignator.pop();
+                            countFunctionCallsInMain();
+                            if (    Obj.Var  != parser.designator[0].getKind() &&
+                                    Obj.Fld  != parser.designator[0].getKind() &&
+                                    Obj.Elem != parser.designator[0].getKind())
+                            {
+                                report_error(lpleft + " designator " + strDesignator + MUST_BE_VAR_CLASS_ELEM);
+                            }
+                            else if (Tab.intType        !=  parser.designator[0].getType() &&
+                                     Tab.charType       !=  parser.designator[0].getType() &&
+                                     parser.boolType    !=  parser.designator[0].getType() &&
+                                     parser.stringType  !=  parser.designator[0].getType())
+                            {
+                                report_error(lpleft + " designator " + strDesignator + " mora biti tipa int, char, bool ili string.");
+                            }
+                            else
+                            {
+                                Codegen.readStatement(parser.designator[0], parser.boolType, parser.stringType);
+                            }
+                        :}
+                    |
+                    READ error:e SEMI
+                        {: syntax_error(eleft + "[READ]" + ERR_RECOVER_TO + ";"); :}
+                    ;
+
+PrintStatement ::=  PRINT LPAREN Expr:e OptionalNumber:on RPAREN SEMI
+                        {:
+                            countFunctionCallsInMain();
+                            if (Tab.intType != e.getResult() && Tab.charType != e.getResult() && parser.boolType != e.getResult() && parser.stringType != e.getResult())
+                            {
+                                report_error(eleft + " prvi parametar funkcije print mora biti tipa int, char, bool ili string.");
+                            }
+                            
+                            Codegen.printStatement(e.getResult(), on);
+                        :}
+                    |
+                    PRINT error:e SEMI:s
+                        {: syntax_error(eleft + ERR_RECOVER_TO + ";"); :}
+                    ;
+
+OptionalNumber ::=  COMMA NUMBER:n
+                        {: RESULT = n; :}
+                    |
+                    /* e */
+                        {: RESULT = 0; :}
+                    ;
+
+MethodCall ::=  Designator:d StmtFuncCall:sfc SEMI:semi
+                    {:
+                        String strDesignator = parser.stackDesignatorString.pop();
+                        peekIntoDesignatorStack();
+                        parser.stackDesignator.pop();
+                        // nije element niza jer ne moze niz funkcija da postoji
+                        if (d.getResult() == true)
+                        {
+                            countFunctionCallsInMain();
+                        }
+                        else
+                        {
+                            report_error(dleft + " Nevalidan poziv, ne moze postojati niz funkcija.");
+                        }
+                        
+                        if (Obj.Meth != parser.designator[1].getKind())
+                        {
+                            report_error(semileft + " designator " + strDesignator + " mora biti metoda klase ili globalna funkcija.");
+                        }
+                    :}
+                |
+                error StmtFuncCall SEMI:semi
+                    {:
+                        syntax_error(semileft + "[Poziv funkcije] " + ERR_RECOVER_TO + ";");
+                    :}
+                ;
+
+StmtFuncCall ::=    LPAREN:lp
+                        {:
+                            // ako treba this staviti ispred prvog parametra
+                            if (parser.bNeedThisPtr && parser.designator[1] != Tab.noObj && parser.designator[1].getName().endsWith(s_METH))
+                            {
+                                Obj this_ = new Obj(Obj.Var, "", Tab.intType, 0, 1);
+                                Code.load(this_);
+                                parser.bNeedThisPtr = false;
+                            }
+                            
+                            parser.stackDesignator.push(parser.designator.clone());
+                            parser.redniBrojParametra.push(0);
+                            Obj methObj = parser.designator[1];
+                            parser.parametriFunkcije.push(getFunctionParamIterator(methObj));
+                            parser.objOfFunction.push(methObj);
+                            if (methObj != Tab.noObj && methObj.getKind() == Obj.Meth)
+                            {
+                                if (methObj.getName().endsWith(s_METH))
+                                {
+                                    parser.parametriFunkcije.peek().next();
+                                }
+                            }
+                        :}
+                    ActualParamsRPAREN:ap
+                        {:
+                           
+                            Obj func = parser.objOfFunction.peek();
+                            int traceNumParam = func.getName().endsWith(s_METH) ? func.getLevel() - 1 : func.getLevel();
+                            if (func != Tab.noObj && func.getKind() == Obj.Meth)
+                            {
+                                if (func.getName().endsWith(s_METH))
+                                {
+                                    parser.redniBrojParametra.push(parser.redniBrojParametra.pop() + 1);
+                                }
+                                if (parser.redniBrojParametra.peek() != func.getLevel())
+                                {
+                                    report_error(apleft + " pri pozivu funkcije/metode; treba proslediti " + traceNumParam + " parametar(a).");
+                                }
+                            }
+                            
+                            parser.objOfFunction.pop();
+                            parser.redniBrojParametra.pop();
+                            parser.parametriFunkcije.pop();
+                            peekIntoDesignatorStack();
+                            parser.stackDesignator.pop();
+                            // String strDesignator = parser.stackDesignatorString.pop();
+
+                            Obj f           = parser.stackDesignator.isEmpty() ? Tab.noObj : parser.stackDesignator.peek()[1];
+                            int beginAdr    = parser.beginAdrOfDesignatorStack.isEmpty() ? 0 : parser.beginAdrOfDesignatorStack.pop();
+                            int endAdr      = parser.endAdrOfDesignatorStack.isEmpty() ? 0 : parser.endAdrOfDesignatorStack.pop();
+                            Codegen.callStamement(f, beginAdr, endAdr);
+                        :}
+             /*   |
+                    LPAREN:lp
+                        {:
+                            if (!parser.beginAdrOfDesignatorStack.isEmpty())
+                            {
+                                parser.beginAdrOfDesignatorStack.pop();
+                            }
+                            if (!parser.endAdrOfDesignatorStack.isEmpty())
+                            {
+                                parser.endAdrOfDesignatorStack.pop();
+                            }
+                            
+                            parser.stackDesignator.push(parser.designator.clone());
+                            parser.redniBrojParametra.push(0);
+                            parser.parametriFunkcije.push(getFunctionParamIterator(parser.designator[1]));
+                            parser.objOfFunction.push(parser.designator[1]);
+                            Obj meth = parser.designator[1];
+                            if (meth != Tab.noObj && meth.getKind() == Obj.Meth)
+                            {
+                                if (meth.getName().endsWith(s_METH))
+                                {
+                                    parser.parametriFunkcije.peek().next();
+                                }
+                            }
+                        :}
+                    error:e RPAREN:rp
+                        {:
+                            syntax_error(eleft + " Greska kod stvarnih argumenata funkcije;" + ERR_RECOVER_TO + ").");
+                            parser.objOfFunction.pop();
+                            parser.redniBrojParametra.pop();
+                            parser.parametriFunkcije.pop();
+                            peekIntoDesignatorStack();
+                            parser.stackDesignator.pop();
+                        :}*/
+                    ;
+
+// Designator krajnji RESULT je false ako je element niza, u suprotnom true
+Designator ::=  IDENT:id
+                    {:
+                        parser.bNeedThisPtr = true;
+                        parser.stackStrOut.push(id);    // za ispis
+
+                        parser.beginAdrOfDesignatorStack.push(Code.pc);
+                        Codegen.setIsArrayDesignator(true); // pretpostavka
+
+                        Obj obj = findObj(id);
+                        parser.designator[0] = Tab.noObj;
+                        parser.designator[1] = Tab.noObj;
+                        if (Obj.Meth == obj.getKind())
+                        {
+                            parser.designator[1] = obj;
+                            boolean isMeth = obj.getName().contains(s_METH);
+                            detectSymbolUsage(idleft, parser.designator[1], isMeth ? eSymbolType.Method : eSymbolType.Function);
+                        }
+                        else
+                        {
+                            parser.designator[0] = obj;
+                            determineAndDetectSymbolUsage(idleft, obj);
+                        }
+                        // ako smo u deklaraciji statementa metode (a ne funkcije), to znaci da funkcije nema, da smo nasli glob var
+                        // pa onda potrazi mozda da li ima redefinisane metode koja se zove id
+                        if (parser.designator[1] == Tab.noObj)
+                        {
+                            parser.designator[1] = findInheritedMethodWithName(id);
+                            if (parser.designator[1] != Tab.noObj)
+                            {
+                                obj = parser.designator[1];
+                            }
+                            detectSymbolUsage(idleft, parser.designator[1], eSymbolType.Method);
+                        }
+                        // ako nisi imao nista
+                        if (Tab.noObj == obj)
+                        {
+                            report_error(idleft + " identifikator " + id + NOT_FOUND);
+                        }
+                        // codegen - 
+                        // ovo se desava samo kada smo unutar statement-a metode klase, a ne u funkcijama
+                        // tada je jedino designator ::= ident polje ili metoda
+                        if ((parser.designator[0] != Tab.noObj && parser.designator[0].getKind() == Obj.Fld) ||
+                            (parser.designator[1] != Tab.noObj && parser.designator[1].getKind() == Obj.Meth && parser.designator[1].getName().endsWith(s_METH)))
+                        {
+                            Obj this_ = new Obj (Obj.Var, "", Tab.intType, 0, 1);
+                            Code.load(this_);
+                        }
+
+                        parser.stackNumLine.push(idleft);
+                        parser.stackDesignator.push(parser.designator.clone());
+                    :}
+                DesignatorTrunkList:dtl
+                    {:
+                        RESULT = operationActionResult(dtl.getResult(), id + dtl.getString());
+                        peekIntoDesignatorStack();
+                        parser.stackDesignator.pop();   // nema daljeg razvoja designatora
+                        parser.stackStrOut.pop();
+                        
+                        Codegen.setIsArrayDesignator(false);
+                        parser.endAdrOfDesignatorStack.push(Code.pc);
+
+                        // Na kraju designator smene se na stackDesignator i stackDesignatorString
+                        // stekovima ostavljaju poslednji designatori i string za dalji razvoj
+                        // FIXME: mozda se ovo izbaci da bude pre odredjenih obrada da ne curi
+                        parser.stackDesignator.push(parser.designator.clone());
+                        parser.stackDesignatorString.push(id + dtl.getString());
+                    :}
+                ;
+
+
+DesignatorTrunkList ::= DesignatorTrunkList:dtl
+                            {:  parser.stackSizeNumLine.push(parser.stackNumLine.size());   :}
+                        DesignatorTrunk:dt
+                            {:
+                                parser.bNeedThisPtr = false;    // cim ima trunk ne treba vise da se generise this
+                                RESULT = operationActionResult(dt.getResult(), dtl.getString() + dt.getString());
+                            :}
+                        |
+                        /* e */
+                            {:
+                                RESULT = operationActionResult(true, "");
+                            :}
+                        ;
+
+DesignatorTrunk ::= DOT:d IDENT:id
+                        {:
+                            RESULT = operationActionResult(true, "." + id);
+                            parser.stackSizeNumLine.pop();
+                            int numLine = parser.stackNumLine.pop(); // broj linije na kojoj je objekat cijem polju pristupamo
+                            parser.stackNumLine.push(idleft);        // broj linije gde se pristupa polju
+                            
+                            // pogledaj pre tacke sta je - mora biti objekat neke klase
+                            peekIntoDesignatorStack();
+                            parser.stackDesignator.pop();
+                            if (parser.designator[0] != Tab.noObj)
+                            {
+                                parser.this_argument = parser.designator[0];
+                                Codegen.designatorDotIdent(parser.designator[0]); // designator na eStack
+                                Codegen.setIsArrayDesignator(true); // pretpostavka, videcemo na kraju
+                                // ako designator Obj nije tipa klasa i ako nije vrste Tip (znaci Var - instanca objekta)
+                                if (parser.designator[0].getType().getKind() == Struct.Class && parser.designator[0].getKind() != Obj.Type)
+                                {
+                                    Obj fld = Tab.noObj;
+                                    Obj met = Tab.noObj;
+                                    Iterator<Obj> it = parser.designator[0].getType().getMembers().iterator();
+                                    while (it.hasNext() && (fld == Tab.noObj || met == Tab.noObj))
+                                    {
+                                        Obj clsMember = it.next();
+                                        if (clsMember.getKind() == Obj.Fld && fld == Tab.noObj && clsMember.getName().equals(id))
+                                        {
+                                            fld = clsMember;
+                                            detectSymbolUsage(idleft, fld, eSymbolType.Field);
+                                        }
+                                        else if (clsMember.getKind() == Obj.Meth && met == Tab.noObj && clsMember.getName().equals(id + s_METH))
+                                        {
+                                            met = clsMember;
+                                            detectSymbolUsage(idleft, met, eSymbolType.Method);
+                                        }
+                                    }
+                                    // Ako nisi nasao metodu trazi u izvedenim (one jos nisu dodate u klasu)
+                                    if (Tab.noObj == met && parser.currentClass.getType().equals(parser.designator[0].getType()))
+                                    {
+                                        Iterator<Obj> itmet = parser.listInheritedMethodObj.iterator();
+                                        while (itmet.hasNext())
+                                        {
+                                            Obj o = itmet.next();
+                                            if (Obj.Meth == o.getKind() && o.getName().split("@")[0].equals(id))
+                                            {
+                                                met = o;
+                                                detectSymbolUsage(idleft, met, eSymbolType.Method);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    
+                                    if (Tab.noObj == fld && Tab.noObj == met)
+                                    {
+                                        report_error(idleft + " ne postoji polje ili metoda sa imenom " + id + " u objektu " + parser.designator[0].getName() + ".");
+                                    }
+                                    parser.designator[0] = fld;
+                                    parser.designator[1] = met;
+                                }
+                                else
+                                {
+                                    report_error(dleft + " promenljiva " + parser.designator[0].getName() + " nije klasnog tipa.");
+                                    // designator reset na noObj?
+                                }
+                            }
+                            else // nije objekat
+                            {
+                                report_error(numLine + " nedozovljen operator . posle imena metode ili funkcije. Ocekivano ().");
+                                parser.designator[1] = Tab.noObj;
+                            }
+
+                            parser.stackDesignator.push(parser.designator.clone());
+                            parser.stackStrOut.push(parser.stackStrOut.pop() + "." + id);
+                        :}
+                    |
+                        {:
+                            Codegen.arrayDesignator(parser.stackDesignator);
+                        :}
+                    DesignatorArrayExpr:dae
+                        {:
+                            RESULT = operationActionResult(dae.getResult(), dae.getString());
+                            parser.stackStrOut.push(parser.stackStrOut.pop() + dae.getString());
+                        :}
+                    ;
+
+DesignatorArrayExpr ::= LBRACKET:lb Expr:e RBRACKET:rb
+                            {:
+                                checkIsDesignatorArrayType(lbleft);
+                                if (Tab.intType != e.getResult())
+                                {
+                                    report_error(eleft + " izraz " + e.toString() + MUST_BE_INT);
+                                }
+
+                                while (parser.stackSizeNumLine.peek() < parser.stackNumLine.size())
+                                {
+                                    parser.stackNumLine.pop();
+                                }
+                                parser.stackSizeNumLine.pop();
+                                RESULT = operationActionResult(false, "[" + e.getString() + "]");
+                            :}
+                        |
+                        LBRACKET:lb Expr:e error:err RBRACKET:rb
+                            {:
+                                checkIsDesignatorArrayType(lbleft);
+                                if (Tab.intType != e.getResult())
+                                {
+                                    report_error(eleft + " izraz " + e.toString() + MUST_BE_INT);
+                                }
+
+                                report_error(eleft + "[Expr error] nedzvoljeni simboli posle izraza - ocekivano }");
+                                syntax_error(rbleft + ERR_RECOVER_TO + "}");
+
+                                while (parser.stackSizeNumLine.peek() < parser.stackNumLine.size())
+                                {
+                                    parser.stackNumLine.pop();
+                                }
+                                parser.stackSizeNumLine.pop();
+                                RESULT = operationActionResult(false, "[" + e.getString() + err.toString() + "]");
+                            :}
+                        |
+                        LBRACKET:lb error RBRACKET:rb
+                            {:
+                                checkIsDesignatorArrayType(lbleft);
+                                syntax_error(lbleft + " [error] ocekivan izraz posle [ - " + ERR_RECOVER_TO + "]");
+                                while (parser.stackSizeNumLine.peek() < parser.stackNumLine.size())
+                                {
+                                    parser.stackNumLine.pop();
+                                }
+                                parser.stackSizeNumLine.pop();
+                                RESULT = operationActionResult(false, "[ERROR]");
+                            :}
+                        ;
+
+ActualParamsRPAREN ::=    ActPars:ap RPAREN
+                        {: RESULT = operationActionResult(true, ap.getString()); :}
+                    |
+                    RPAREN
+                        {: RESULT = operationActionResult(false, ""); :}
+                    ;
+
+ActPars ::= Expr:e
+                {:
+                    Obj obj = parser.parametriFunkcije.peek().hasNext() ? parser.parametriFunkcije.peek().next() : Tab.noObj;   // get next form param
+                    if (Tab.noObj != parser.objOfFunction.peek() &&          // there is a func?
+                        Obj.Meth == parser.objOfFunction.peek().getKind() &&    // is this really func?
+                        (parser.redniBrojParametra.peek() + 1) <= parser.objOfFunction.peek().getLevel() && // nismo premasili broj parametara
+                        false == isAssignableEqualTo(e.getResult(), obj.getType())  )                       // poklapaju se po tipu?
+                    {
+                        report_error(eleft + " parametar " + (parser.redniBrojParametra.peek() + 1) + " nije kompatibilan sa ocekivanim tipom parametra.");
+                    }
+                    
+                    parser.redniBrojParametra.push(parser.redniBrojParametra.pop() + 1);
+                :}
+            CommaExprParamList:cepl
+                {: RESULT = operationActionResult(null, e.getString() + cepl.getString()); :}
+            |
+            error:e CommaExprParamList:cepl
+                {:
+                    syntax_error(eleft + ERR_RECOVER_TO + (cepl.getResult() ? "," : ")")); 
+                    RESULT = operationActionResult(null, e.toString() + cepl.getString());
+                :}
+            ;
+
+CommaExprParamList ::=  CommaExprParamList:cepl CommaExprParam:cep
+                            {: RESULT = operationActionResult(cep.getResult() || cepl.getResult(), cepl.getString() + cep.getString()); :}
+                        |
+                        /* e */
+                            {: RESULT = operationActionResult(false, ""); :}
+                        ;
+
+CommaExprParam ::=  COMMA Expr:e
+                        {:
+                            Obj obj = parser.parametriFunkcije.peek().hasNext() ? parser.parametriFunkcije.peek().next() : Tab.noObj;   // get next arg
+                            if (Tab.noObj != parser.objOfFunction.peek() &&                                             // there is a func
+                                Obj.Meth == parser.objOfFunction.peek().getKind() &&                                    // is func
+                                (parser.redniBrojParametra.peek() + 1) <= parser.objOfFunction.peek().getLevel() &&     // nismo premasili broj parametara funkcije
+                                false == isAssignableEqualTo(e.getResult(), obj.getType()))                             // ne poklapaju se argumenti po tipu?
+                            {
+                                report_error(eleft + " parametar " + (parser.redniBrojParametra.peek() + 1) + ". nije kompatibilan sa ocekivanim tipom parametra.");
+                            }
+                            parser.redniBrojParametra.push(parser.redniBrojParametra.pop() + 1);
+                            RESULT = operationActionResult(true, ", " + e.getString());
+                        :}
+                    |
+                    COMMA:c error:err
+                        {:
+                            syntax_error(cleft + ERR_RECOVER_TO + ", ili )"); 
+                            RESULT = operationActionResult(true, ", " + err.toString());
+                        :}
+                    |
+                    COMMA:c
+                        {:
+                            report_error(cleft + " ocekuje se formalni parametar"); 
+                            syntax_error(cleft + ERR_RECOVER_TO + ", ili )");
+                            RESULT = operationActionResult(true, "");
+                        :}
+                    ;
+
+/********************************
+ ********************************
+ *       EXPRESSION DECLARATION
+ ********************************
+ ********************************/
+
+// expression je tipa Result<Sctruct> (noType ako je greska)
+Expr ::=    MINUS:m Term:term
+                {:
+                    Codegen.multiplyByMinusOne();
+                    if (term.getResult().compatibleWith(Tab.intType))
+                    {
+                        parser.exprErrorStack.push(false);
+                    }
+                    else
+                    {
+                        parser.exprErrorStack.push(true);
+                        report_error(termleft + " izraz " + term.getString() + " nije tipa int.");
+                    }
+                    parser.startTerminExprStack.push(Tab.intType);
+                    parser.tipStack.push("int");
+                :}
+            AddopTermList:atl
+                {:
+                    parser.startTerminExprStack.pop();
+                    parser.tipStack.pop();
+                    String rstring = "-" + term.getString() + atl.getString();
+                    Struct rstruct = parser.exprErrorStack.pop() ? Tab.noType : Tab.intType; // if error kak, else it's term
+                    RESULT = operationActionResult(rstruct, rstring);
+                :}
+            |
+            Term:term
+                {:
+                    String sTip;
+                    Struct struct;
+                    if (term.getResult().compatibleWith(Tab.intType))
+                    {
+                        struct = Tab.intType;
+                        sTip = "int";
+                    }
+                    else if (term.getResult().compatibleWith(parser.stringType))
+                    {
+                        struct = parser.stringType;
+                        sTip = "string";
+                    }
+                    else
+                    {
+                        struct = Tab.noType;
+                        sTip = "string ili int";
+                        parser.tipStack.push(term.getString());
+                    }
+                    
+                    parser.exprErrorStack.push(false);
+                    parser.startTerminExprStack.push(struct);
+                    parser.tipStack.push(sTip);
+                :}
+            AddopTermList:atl
+                {:
+                    parser.tipStack.pop();
+                    // ako ima nastavka mora biti int ili string
+                    if (atl.getResult() && parser.startTerminExprStack.peek() == Tab.noType)
+                    {
+                        report_error(termleft + " izraz " + parser.tipStack.peek() + " mora biti tipa int ili string.");
+                    }
+                    // ako nema nastavka u redu je
+                    if (parser.startTerminExprStack.peek() == Tab.noType)
+                    {
+                        parser.tipStack.pop();
+                    }
+                    parser.startTerminExprStack.pop();
+                    // parser.tipStack.pop();
+                    Struct rstruct = parser.exprErrorStack.pop() ? Tab.noType : term.getResult(); // if error kak, else it's term
+                    String rstring = term.getString() + atl.getString();
+                    RESULT = operationActionResult(rstruct, rstring);
+                :}
+            ;
+
+// addition
+AddopTermList ::=   AddopTermList:atl AddopTerm:at
+                        {:
+                            // true u slucaju jer ima necega
+                            RESULT = operationActionResult(true, atl.getString() + at.getString());
+                        :}
+                    |
+                    /* e */
+                        {:
+                            // false jer nema nicega
+                            RESULT = operationActionResult(false, "");
+                        :}
+                    ;
+
+AddopTerm ::=   Addop:ao Term:t
+                    {:
+                        if (t.getResult().compatibleWith(parser.stringType) && ao.getResult() != eAdd)
+                        {
+                            report_error(aoleft + STRING_OP_ERROR); // stringovi mogu samo da se sabiraju
+                        }
+
+                        if (parser.startTerminExprStack.peek() == Tab.noType)
+                        {
+                            if (!t.getResult().compatibleWith(Tab.intType) && !t.getResult().compatibleWith(parser.stringType))
+                            {
+                                report_error(tleft + " izraz " + t.getString() + " nije tipa " + parser.tipStack.peek());
+                                // set expr error
+                                parser.exprErrorStack.pop();
+                                parser.exprErrorStack.push(true);
+                            }
+                            else
+                            {
+                                Codegen.addopTerm__Addop_Term(ao.getResult(), t.getResult());
+                            }
+                        }
+                        else
+                        {
+                            if (!t.getResult().compatibleWith(parser.startTerminExprStack.peek()))
+                            {
+                                report_error(tleft + " izraz " + t.getString() + " nije tipa " + parser.tipStack.peek());
+                                parser.exprErrorStack.pop();
+                                parser.exprErrorStack.push(true);
+                            }
+                            else
+                            {
+                                Codegen.addopTerm__Addop_Term(ao.getResult(), t.getResult());
+                            }
+                        }
+
+                        RESULT = operationActionResult(null, ao.getString() + " " + t.getString());
+                    :}
+                ;
+
+// multiplication
+Term ::=    Factor:f
+                {: parser.stackDesignatorString.push(f.getString()); :}
+            MulopFactorList:mfl
+                {:
+                    String str = parser.stackDesignatorString.pop();
+                    Struct structResult;
+                    String strResult = f.getString() + mfl.getString();
+                    if (mfl.getResult() && !f.getResult().compatibleWith(Tab.intType))
+                    {
+                        report_error(fleft + " izraz " + str + " nije tipa int.");
+                        if (!parser.termError.isEmpty())
+                            parser.termError.pop();
+                        parser.termError.push(true);
+                    }
+
+                    if (!parser.termError.isEmpty())
+                    {
+                        parser.termError.pop();
+                        structResult = Tab.noType;
+                    }
+                    else
+                    {
+                        structResult = f.getResult();
+                    }
+
+                    RESULT = operationActionResult(structResult, strResult);
+                :}
+            ;
+
+MulopFactorList ::= MulopFactorList:mfl MulopFactor:mf
+                        {:
+                            // true u slucaju jer ima necega
+                            RESULT = operationActionResult(true, mfl.getString() + mf.getString());
+                        :}
+                    |
+                    /* e */
+                        {:
+                            // false jer nema nicega
+                            RESULT = operationActionResult(false, "");
+                        :}
+                    ;
+
+MulopFactor ::= Mulop:ml Factor:f
+                    {:
+                        Code.put(ml.getResult());
+                        if (f.getResult().compatibleWith(Tab.intType) == false)
+                        {
+                            report_error(fleft + " izraz " + f.getString() + " mora biti tipa int ");
+                            if (!parser.termError.isEmpty())
+                                parser.termError.pop();
+                            parser.termError.push(true);
+                        }
+
+                        RESULT = operationActionResult(null, ml.getString() + " " + f.getString());
+                    :}
+                ;
+
+Factor ::=  Designator:d OptionalFuncCall:o
+                {:
+                    peekIntoDesignatorStack();
+                    parser.stackDesignator.pop();
+                    Struct valResult = null;
+                    
+                    if (d.getResult() && o.getResult())
+                    {
+                        countFunctionCallsInMain();
+                    }
+                    
+                    if (o.getResult())
+                    {
+                        Codegen.factor__Designator_Function(parser.designator[1],
+                                                            parser.beginAdrOfDesignatorStack.isEmpty()  ? 0 : parser.beginAdrOfDesignatorStack.pop(),
+                                                            parser.endAdrOfDesignatorStack.isEmpty()    ? 0 : parser.endAdrOfDesignatorStack.pop());
+
+                        if (Obj.Meth != parser.designator[1].getKind())
+                        {
+                            report_error(oleft + " izraz " + parser.stackDesignatorString.peek() + " mora biti metoda klase ili globalna funkcija.");
+                        }
+
+                        valResult = parser.designator[1].getType();
+                    }
+                    else
+                    {
+                        Codegen.factor__Designator(parser.designator[0]);
+                        if (!parser.beginAdrOfDesignatorStack.isEmpty())    parser.beginAdrOfDesignatorStack.pop();
+                        if (!parser.endAdrOfDesignatorStack.isEmpty())      parser.endAdrOfDesignatorStack.pop();
+                        
+                        valResult = parser.designator[0].getType();
+                    }
+                    
+                    parser.stackDesignatorString.pop();
+                    RESULT = operationActionResult(valResult, d.getString() + o.getString());
+                :}
+            |
+            NUMBER:n
+                {:
+                    Code.load(new Obj(Obj.Con, "", Tab.intType, n, 0));
+                    RESULT = operationActionResult(Tab.intType, n.toString());
+                :}
+            |
+            CHARCONST:c
+                {:
+                    Code.load(new Obj(Obj.Con, "", Tab.charType, c.charValue(), 0));
+                    RESULT = operationActionResult(Tab.charType, "\'" + c + "\'");
+                :}
+            |
+            STRCONST:s
+                {:
+                    Codegen.factorStrconst(s);
+                    RESULT = operationActionResult(parser.stringType, "\"" + s + "\"");
+                :}
+            |
+            BOOLCONST:b
+                {:
+                    Code.load(new Obj(Obj.Con, "", Tab.intType, b ? 1 : 0, 0));
+                    RESULT = operationActionResult(parser.boolType, b.toString());
+                :}
+            |
+            NEW:nw Type:t
+                {:
+                    Obj typeObj = new Obj(parser.currentType.getKind(),
+                                          parser.currentType.getName(),
+                                          parser.currentType.getType(),
+                                          parser.currentType.getAdr(),
+                                          parser.currentType.getLevel());
+                    parser.currentTypeStack.push(typeObj);
+                    parser.lineNumStack.push(tleft);
+                    // Ako je klasni tip nadji konstruktore
+                    if (Struct.Class == typeObj.getType().getKind())
+                    {
+                        parser.constructors[0] = Tab.noObj;
+                        parser.constructors[1] = Tab.noObj;
+                        Iterator<Obj> it = typeObj.getType().getMembers().iterator();
+                        while (it.hasNext())
+                        {
+                            Obj member = it.next();
+                            if (Obj.Meth == member.getKind() && 
+                                member.getName().split("@")[0].equals(typeObj.getName()) &&
+                                (member.getName().split("@")[1].equals(sCONSTRUCTOR0) || member.getName().split("@")[1].equals(sCONSTRUCTOR1)))
+                            {
+                                parser.constructors[(member.getLevel() == 1) ? 0 : 1] = member;
+                            }
+                        }
+                    }
+                :}
+            OptionalArrayFunctionExpression:o // new SomeClass(params)!? moze li ovo?!
+                {:
+                    parser.lineNumStack.pop();
+                    parser.currentType = parser.currentTypeStack.pop();
+                    // niz?
+                    if (o.getResult() && !parser.arrayTypesMap.containsKey(parser.currentType.getName()))
+                    {
+                        parser.arrayTypesMap.put(parser.currentType.getName(), new Struct(Struct.Array, t));
+                    }
+                    // klasa?
+                    if (!o.getResult() && !(parser.currentType.getKind() == Obj.Type && parser.currentType.getType().getKind() == Struct.Class))
+                    {
+                        report_error(tleft + " " + parser.currentType.getName() + " ne predstavlja tip klase.");
+                    }
+
+                    if (parser.currentType.getKind() == Obj.Type && parser.currentType.getType().getKind() == Struct.Class)
+                    {
+                        parser.report_info("[Detektovanje instanciranja " + (o.getResult() ? "objekata" : "objekta") + " na liniji " + nwleft + ": Tip - " + parser.currentType.getName(), null);
+                    }
+
+                    Struct res = o.getResult() ? parser.arrayTypesMap.get(parser.currentType.getName()) : t;
+                    RESULT = operationActionResult(res, "new " + parser.currentType.getName() + o.getString());
+                :}
+            |
+            LPAREN Expr:e RPAREN
+                {:
+                    RESULT = operationActionResult(e.getResult(), "(" + e.getString() + ")");
+                :}
+            ;
+
+OptionalFuncCall ::=    LPAREN:lp
+                            {:
+                                if (Tab.noObj == parser.designator[1]) // ovo nije metoda?
+                                {
+                                    report_error(lpleft + " izraz sa leve strane otvorene zagrade ne predstavlja metodu");
+                                }
+                                
+                                if (parser.bNeedThisPtr && parser.designator[1] != Tab.noObj && parser.designator[1].getName().endsWith(s_METH))
+                                {
+                                    // napravljen je vec method frame na pStack, 
+                                    // ubacuje se na eStack this objekat, pa onda ostali argumenti
+                                    Obj this_ = new Obj(Obj.Var, "", Tab.intType, 0, 1);
+                                    Code.load(this_);
+                                    parser.bNeedThisPtr = false;
+                                }
+
+                                parser.this_argument = Tab.noObj;
+                                parser.redniBrojParametra.push(0);
+                                parser.parametriFunkcije.push(getFunctionParamIterator(parser.designator[1]));  // stavi iterator na scope metode
+                                parser.objOfFunction.push(parser.designator[1]);    // stavi metodu na stek
+                                // if method preskoci this kao parametar
+                                if (/*Obj.Meth == parser.designator[1].getKind() &&*/ parser.designator[1].getName().contains(s_METH))
+                                {
+                                    parser.parametriFunkcije.peek().next(); // ako je metoda preskoci this
+                                }
+                            :}
+                        ActualParamsRPAREN:ap
+                            {:
+                                if (Tab.noObj != parser.objOfFunction.peek() && Obj.Meth == parser.objOfFunction.peek().getKind())
+                                {
+                                    int numParsTrace = parser.objOfFunction.peek().getLevel();
+                                    
+                                    if (parser.objOfFunction.peek().getName().endsWith(s_METH))
+                                    {
+                                        parser.redniBrojParametra.push(parser.redniBrojParametra.pop() + 1); // uracunaj this za kasniju proveru
+                                        numParsTrace -= 1;  // nemoj da racunas this prilikom ispisa
+                                        //detectSymbolUsage(lp, parser.designator[1], eSymbolType.Method);
+                                    }
+                                    
+                                    // provera da li ima tacno argumenata
+                                    if (parser.redniBrojParametra.peek() != parser.objOfFunction.peek().getLevel())
+                                    {
+                                        report_error(apleft + " pri pozivu funkcije " + parser.objOfFunction.peek().getName() + 
+                                                ". Treba da ima " + numParsTrace + " parametar(a).");
+                                    }
+                                }
+                                parser.objOfFunction.pop();
+                                parser.redniBrojParametra.pop();
+                                parser.parametriFunkcije.pop();
+                                RESULT = operationActionResult(true, "(" + ap.getString() + ")");   // true jer jeste poziv funkcije
+                            :}
+                    /*    |
+                        LPAREN:lp
+                            {:
+                                if (Tab.noObj == parser.designator[1]) // ovo nije metoda?
+                                {
+                                    report_error(lpleft + "izraz sa leve strane otvorene zagrade ne predstavlja metodu");
+                                }
+                                // TODO CODEGENETHIS?! kao gore?
+                                parser.redniBrojParametra.push(0);
+                                parser.parametriFunkcije.push(getFunctionParamIterator(parser.designator[1]));
+                                parser.objOfFunction.push(parser.designator[1]);
+                                // if method preskoci this
+                                if ( Tab.noObj != parser.designator[1] && Obj.Meth == parser.designator[1].getKind() && parser.designator[1].getName().endsWith(s_METH) )
+                                {
+                                   parser.parametriFunkcije.peek().next();  // ako je metoda preskoci this
+                                }
+                            :}
+                        error:e RPAREN
+                            {:
+                                parser.objOfFunction.pop();
+                                parser.parametriFunkcije.pop();
+                                parser.redniBrojParametra.pop();
+                                syntax_error(eleft + "[Factor poziv funkcije]" + ERR_RECOVER_TO + ").");
+                                RESULT = operationActionResult(true, "(" + e + ")");
+                            :} */
+                        |
+                        /* e */
+                            {:
+                                RESULT = operationActionResult(false, "");
+                            :}
+                        ;
+
+// vraca true ako je niz, false ako je c-tor
+OptionalArrayFunctionExpression ::= LBRACKET:lb Expr:e RBRACKET
+                                        {:
+                                            //optionalArrayFunctionExpressionSemantic(lbleft);
+                                            if (Tab.intType != e.getResult())
+                                            {
+                                                report_error(eleft + " izraz koji odredjuje broj elemenata niza kod operatora new " + MUST_BE_INT);
+                                            }
+                                            Codegen.factorNEWType(parser.currentTypeStack.peek(), true);
+                                            RESULT = operationActionResult(true, "[" + e.getString() + "]");
+                                        :}
+                                    |
+                                    LBRACKET:lb Expr:e error:err RBRACKET
+                                        {:
+                                            //optionalArrayFunctionExpressionSemantic(lbleft);
+                                            if (Tab.intType != e.getResult())
+                                            {
+                                                report_error(eleft + " izraz koji odredjuje broj elemenata niza kod operatora new " + MUST_BE_INT);
+                                            }
+                                            syntax_error(errleft + "[Indeksiranje nizova]" + ERR_RECOVER_TO + "].");
+                                            RESULT = operationActionResult(true, "[" + e.getString() + " " + err.toString() + "]");
+                                        :}
+                                    |
+                                    LBRACKET:lb error:err RBRACKET
+                                        {:
+                                            //optionalArrayFunctionExpressionSemantic(lbleft);
+                                            syntax_error(errleft + "[Indeksiranje nizova]" + ERR_RECOVER_TO + "].");
+                                            RESULT = operationActionResult(true, "[" + err.toString() + "]");
+                                        :}
+                                    |
+                                    /* e */
+                                        {:
+                                            //optionalArrayFunctionExpressionSemantic(parser.lineNumStack.peek());
+                                            Codegen.factorNEWType(parser.currentTypeStack.peek(), false);
+                                            RESULT = operationActionResult(false, "");
+                                        :}
+                                    //|
+                                    //error:e RBRACKET
+                                    //    {: syntax_error(errleft + "[Indeksiranje nizova]" + ERR_RECOVER_TO + "]."); :}
+                                    /*|
+                                    LPAREN
+                                    OptionalConstructorActPars:oap RPAREN:rp
+                                    |
+                                    LPAREN error:err RPAREN:rp */
+                                    ;
+
+//OptionalConstructorActPars ::=  ActPars:ap
+//                                |
+//                                /* e */
+//                                ; 
+
+Relop ::=   EQ:eq       {: RESULT = operationActionResult(eq, eq); :}
+            |
+            NEQ:neq     {: RESULT = operationActionResult(neq, neq); :}
+            |
+            GT:gt       {: RESULT = operationActionResult(gt, gt); :}
+            |
+            GE:ge       {: RESULT = operationActionResult(ge, ge); :}
+            |
+            LT:lt       {: RESULT = operationActionResult(lt, lt); :}
+            |
+            LE:le       {: RESULT = operationActionResult(le, le); :}
+            ;
+
+Addop ::=   PLUS:p      {: RESULT = operationActionResult(eAdd, p); :}
+            |
+            MINUS:m     {: RESULT = operationActionResult(eSub, m); :}
+            ;
+
+Mulop ::=   MUL:ml      {: RESULT = operationActionResult(eMul, ml); :}
+            |
+            DIV:dv      {: RESULT = operationActionResult(eDiv, dv); :}
+            |
+            MOD:md      {: RESULT = operationActionResult(eMod, md); :}
+            ;

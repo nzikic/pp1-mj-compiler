@@ -1,0 +1,6 @@
+program Program
+//const int x = 3;
+const int y = 4, z = 5, o = l, q = 7;
+const char a = 'a', b = 3, c = 'c', d = 'd';
+{
+}

@@ -1,0 +1,23 @@
+// nivo A
+
+program MaxCifra
+	const x;                   //semanticka, tip x nije definisan
+							   //sintaksna greska oporavak do ;
+	int a, c, maxcif;
+	char e = '2';              //sintaksna greska oporavak do ;
+	int c;                     //semanticka, c je vec definisano
+{
+	void main() char a; int z = 0 { //sintaksna greska, oporavak do {
+		read(a);
+		maxcif = 0;
+		while(a != 0){            //semanticka, tipovi se ne poklapaju
+			c = a % 10;
+			if(maxcif <> c)       //sintaksna greska u uslovu if-a, oporavak do )
+				maxcif = c;
+			a = a/10;             //semanticka, operandi uz / moraju biti int
+		}
+		read(x);                 //semanticka, x nije deklarisan, nekorektan tip parametra u read 
+		x++;                     //semanticka, isto
+		print(max);              //semanticka, isto
+	}
+}

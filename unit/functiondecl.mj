@@ -1,0 +1,14 @@
+program Program
+const string s = "string";
+{
+	void main(string a, char, int b)
+	int x, =, y;
+	char c;
+	bool b;
+	//string s;
+	{
+		- "dasds" + "1";
+		return true + false;
+		return 3+4 * 2-1;
+	}
+}

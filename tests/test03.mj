@@ -1,0 +1,20 @@
+// nivo A
+
+program test03
+
+	const int a = 3;
+	int x, y;
+	char z;
+{
+	void main(){
+		read(a);               //semanticka, a mora biti promenljiva, element niza ili polje klase
+		a = 5;                 //semanticka, isto kao prethodna
+		x = 1; y = 3; z = 'b';  
+		while(z < a){          //semanticka, ne poklapaju se tipovi
+			z = y + x;         //semanticka, isto 
+			x = x + 1; 
+		}
+		break;                 //semanticka, break van petlje
+	}
+	
+}

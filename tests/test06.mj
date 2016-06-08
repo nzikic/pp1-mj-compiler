@@ -1,0 +1,21 @@
+//nivo B
+
+program test06
+	int a[], b[], x,y;
+	char c[], d[], j;
+{
+	
+	void main(){
+		x = 3;
+		a = new char[5];      //semanticka, nekompatiblini tipovi
+		a[x++] = 2;           //sintaksna greska pri indeksiranju, oporavak do ]
+		a[j] = 3;             //semanticka, indekser mora biti int
+		a[1] = x + b;         //semanticka greksa u tipu sa leve i desne strane
+		j = 'a'; 
+		c = new char[3];       
+		c[2] = j++;           //sintaksna greska u dodeli, oporavak do ;
+		len(x);               //semanticka, parametar mora biti niz
+		len(a);
+		print(a);             //semanticka, nekorektan tip parametra
+	}
+}

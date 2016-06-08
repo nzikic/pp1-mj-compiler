@@ -1,0 +1,115 @@
+//sveobuhvatni test
+
+program Program
+class A{
+	int x[],y[];
+	{
+		int pr() {
+			return 1;
+		}
+		int pr(){         //semanticka, pr vec deklarisano
+			return 0;
+		}
+		
+		int pr1() { 
+			return pr();
+		}
+	}
+}
+
+const int pi = 3, e = 2;
+const string strin="aaa";
+
+class B extends A{
+	int i; int x[];
+	A theAA;
+	{	
+		void voidtest(int a,char b)
+			int c;
+		{
+			read(a); read(b);read(c);
+		}
+		
+		int met(int a) {
+			return a+1;
+		}
+		
+		int getValue(int a) int b; bool c;
+		{
+			 this.i=6;	
+			 return this.i + this.x[0] + this.met(a);
+		}
+	}
+}
+class C extends B{
+	A theA;
+	string a = "bas je roze i zut";          //sintaksna greska, dodela vrednosti pri deklaraciji promenljive,
+	                                         //oporavak do ;
+	{
+		void glupost(int ,m) int i, bool c {  //sintaksna, oporavak do ) i do {
+			return i + c;                     //semanticka, c nije deklarisano, ne poklapaju se tipovi, 
+			                                  //metoda nema povratnu vrednost...
+		}
+	}
+}
+
+class E extends {                           //sintaksna greska 
+	bool b; 
+	C, cc,                                  //sintaksna greska
+	char e;
+	}
+
+
+{
+
+int met(int par){return par-1;}
+string strfunc(string s){ return s+"aa";}
+
+void main() A a; B b;C c; int i,y,z; int x[];string str1,str2; bool bulin;
+{
+	str2="abcd";
+	str1="abc"+strfunc(str2);
+	str2="mama"+"tata";
+	strin = "ne moze se dodeliti vrednost konstantnom stringu";    //semanticka
+	bulin = -true;                 //semanticka, unarni operator ne moze da se primenu na boolean promenjivu
+	print(bulin);
+	a = new A;
+	a.x = new int[5];
+	a.y = new int[5];
+	c = new C;
+	i=met(pi+3)+e*2;
+	
+	c.theA = a;
+	c.x = new int[5];
+	x = new int[3];
+	i=0;
+	read(c.i);
+	while(i<5) {
+		read(c.x[i]); read(c.theA.x[i]); 
+		i++;
+		
+	}
+	print(c.getValue(c.theA.x[0]));
+	c.theA.x[0] = 1;
+	if(i==1)
+		i = c.met(1) + b.getValue(c.x[0]) + 5*8;
+		b.getValue(b.y[i]);
+		b.pr();
+		i = 4 * (5 + 6 + i) + i + met(2);
+		chr(1);
+		i=ord('1');
+		
+		
+		print(4, 1);
+		a = b;
+	if(true)i++;
+	
+	while(str2 == "kraj" || str1 == "kraj"){
+		c.theA.x[i] = a.x[i];
+		if(b.theAA.y[i] == c.theA.x[i] && c.pr1()) break;   //semanticka c.pr1() vraca int (uslov mora biti boolean)
+		read(str1);
+		read(str2);
+	} 
+	
+	}
+}
